@@ -1,0 +1,14 @@
+{
+  "all": true,
+  "include": [
+    "src/**"
+  ],
+  "exclude": [
+    "src/public/**",
+    "src/**/*.d.ts"
+  ],
+  "reporter": [
+    "text",
+    "text-summary"
+  ]
+}
