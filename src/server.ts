@@ -226,11 +226,19 @@ app.use(createImageRoutes(db, store));
 // The extension's board picker: a page authenticated by its pending token alone (see routes.ts).
 app.use('/pick', routes.pick);
 
-// The Chrome extension, zipped on demand from the folder shipped in the image (see settings).
+// The Chrome extension, zipped from the folder shipped in the image (see settings). Its contents and
+// fingerprint are fixed at startup, so the zip is built on the first download and kept; a failed
+// build is dropped so the next download retries.
+let extensionZip: Promise<Buffer> | undefined;
 app.get('/extension.zip', auth.requirePage, async (req, res) => {
+  extensionZip ??= zipDirectory(extensionDir, 'pinnery-extension', stampManifest).catch((e: unknown) => {
+    extensionZip = undefined;
+    throw e;
+  });
+  const zip = await extensionZip;
   res.set('Content-Disposition', 'attachment; filename="pinnery-extension.zip"');
   res.set('Cache-Control', 'no-cache');
-  res.type('application/zip').send(await zipDirectory(extensionDir, 'pinnery-extension', stampManifest));
+  res.type('application/zip').send(zip);
 });
 
 const index = path.join(publicDir, 'index.html');
