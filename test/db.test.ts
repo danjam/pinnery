@@ -56,9 +56,11 @@ describe('schema versions', () => {
     raw((db) => db.exec(`
       CREATE TABLE boards (id INTEGER PRIMARY KEY, name TEXT NOT NULL, cover_pin_id INTEGER, created_at TEXT);
       CREATE TABLE pins (id INTEGER PRIMARY KEY, board_id INTEGER NOT NULL, sha256 TEXT NOT NULL, width INTEGER NOT NULL,
-        height INTEGER NOT NULL, mime TEXT NOT NULL, dhash TEXT NOT NULL, created_at TEXT);
+        height INTEGER NOT NULL, mime TEXT NOT NULL, animated INTEGER NOT NULL DEFAULT 0, source_url TEXT, page_title TEXT,
+        dhash TEXT NOT NULL, created_at TEXT);
       CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      CREATE TABLE sessions (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, created_at TEXT, expires_at TEXT);
+      CREATE TABLE sessions (id INTEGER PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, kind TEXT NOT NULL DEFAULT 'session',
+        name TEXT, created_at TEXT, last_used_at TEXT, expires_at TEXT);
       INSERT INTO boards (name) VALUES ('Garden');
       INSERT INTO pins (board_id, sha256, width, height, mime, dhash) VALUES (1, 'abc', 10, 20, 'image/png', 'ff');
       INSERT INTO settings VALUES ('dupe_threshold', '5');
@@ -74,6 +76,17 @@ describe('schema versions', () => {
     assert.deepEqual(db.prepare('SELECT name FROM boards').all(), [{ name: 'Garden' }]);
     assert.equal((db.prepare('SELECT count(*) AS n FROM pins').get() as { n: number }).n, 1);
     db.close();
+
+    // Same tables, columns and indexes as a new database, so later steps can rely on version 1.
+    const shape = (db: Db) => (db.prepare("SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").all() as { type: string; name: string }[])
+      .map((o) => (o.type === 'table' ? `${o.name}(${columns(db, o.name).sort().join(',')})` : o.name));
+    const freshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinnery-test-'));
+    t.after(() => fs.rmSync(freshDir, { recursive: true, force: true }));
+    const fresh = openDb(freshDir);
+    const upgraded = openDb(dataDir);
+    assert.deepEqual(shape(upgraded), shape(fresh));
+    fresh.close();
+    upgraded.close();
 
     const backups = fs.readdirSync(path.join(dataDir, 'backups'));
     assert.equal(backups.length, 1);

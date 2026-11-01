@@ -115,15 +115,48 @@ CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens(user_id, kind);
 `;
 
 // The database's schema version lives in its header (PRAGMA user_version). SCHEMA above is the
-// latest shape: a new database gets it and starts at the latest version. An existing one runs only
-// the steps above its version, in order. To change the schema, update SCHEMA and append a step that
-// brings an existing database to the same shape. Never edit or reorder a step that has shipped.
+// latest shape, and only an empty database gets it, starting at the latest version. An existing one
+// runs only the steps above its version, in order, never SCHEMA. To change the schema, update SCHEMA
+// and append a step that brings an existing database to the same shape. Never edit or reorder a
+// step that has shipped.
 // Each step runs in a transaction that also records its version, so a failed step leaves the
 // database at the version before it.
 const MIGRATIONS: ((db: Db) => void)[] = [
   // 1: databases from before versioning (user_version 0). Their shape varies, so this step looks
   // at the tables. Later steps can rely on version 1 and needn't.
   (db) => {
+    // From before accounts: these tables didn't exist. As they were at version 1; don't edit.
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id                    INTEGER PRIMARY KEY,
+        email                 TEXT NOT NULL UNIQUE,
+        display_name          TEXT NOT NULL,
+        password_hash         TEXT NOT NULL,
+        is_admin              INTEGER NOT NULL DEFAULT 0,
+        must_change_password  INTEGER NOT NULL DEFAULT 0,
+        created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE TABLE IF NOT EXISTS board_shares (
+        board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role        TEXT NOT NULL CHECK (role IN ('viewer', 'editor')),
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (board_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS board_shares_user ON board_shares(user_id);
+      CREATE TABLE IF NOT EXISTS email_tokens (
+        id          INTEGER PRIMARY KEY,
+        token_hash  TEXT NOT NULL UNIQUE,
+        kind        TEXT NOT NULL,
+        email       TEXT NOT NULL,
+        user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        expires_at  TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens(user_id, kind);
+      CREATE INDEX IF NOT EXISTS pins_board ON pins(board_id, id);
+      CREATE INDEX IF NOT EXISTS pins_sha256 ON pins(sha256);
+    `);
     // From before duplicate detection was removed: a NOT NULL dhash column and a dupe_threshold
     // setting, neither written any more.
     if (hasColumn(db, 'pins', 'dhash')) db.exec('ALTER TABLE pins DROP COLUMN dhash');
@@ -159,11 +192,7 @@ export function openDb(dataDir: string): Db {
     })();
     return db;
   }
-  if (version === 0) {
-    if (preAccounts(db)) backup(db, dataDir);
-    // Tables a pre-versioning database doesn't have yet are created at the latest shape.
-    db.exec(SCHEMA);
-  }
+  if (version === 0 && preAccounts(db)) backup(db, dataDir);
   for (let v = version + 1; v <= SCHEMA_VERSION; v++) {
     db.transaction(() => {
       MIGRATIONS[v - 1](db);
