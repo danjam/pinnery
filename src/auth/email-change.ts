@@ -5,11 +5,11 @@ import { message } from '../mail.ts';
 import type { Mailer } from '../mail.ts';
 import type { Core } from './core.ts';
 import type { Links } from './links.ts';
-import { normaliseEmail, validEmail, verifyHash } from './util.ts';
+import { normaliseEmail, validEmail } from './util.ts';
 
 // ---- email change ----
 export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mailer) {
-  const { getUser, getUserByEmail, throttled, recordFailure } = core;
+  const { getUser, getUserByEmail, throttled, checkPassword } = core;
   const { baseUrl, deleteLink, deleteUserLinks, issueLink, lookupLink, sendQuietly } = links;
 
   // POST /api/email — body { email, password }, signed in. Sends a confirmation to the new address;
@@ -21,10 +21,7 @@ export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mail
     if (throttled(ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
     const user = getUser.get(req.user.id)!;
     const given = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!verifyHash(given, user.password_hash)) {
-      recordFailure(ip);
-      return res.status(403).json({ error: 'wrong password' });
-    }
+    if (!await checkPassword(ip, given, user.password_hash)) return res.status(403).json({ error: 'wrong password' });
     const email = normaliseEmail(req.body.email);
     if (!validEmail(email)) return res.status(400).json({ error: 'enter an email address' });
     if (email === user.email) return res.status(400).json({ error: 'that’s already your email' });

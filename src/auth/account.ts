@@ -2,19 +2,19 @@ import type { NextFunction, Request, Response } from 'express';
 import type { Db } from '../db.ts';
 import type { Core } from './core.ts';
 import type { Links } from './links.ts';
-import { MIN_PASSWORD, hex, sha256, verifyHash } from './util.ts';
+import { MIN_PASSWORD, hex, sha256 } from './util.ts';
 
 // Signing in and out, the signed-in user, their password and API tokens, and the middleware that
 // guards everything else.
 export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChanged }: Links) {
   const {
-    getUser, listTokenRows, deleteTokenById, deleteToken, throttled, recordFailure,
-    cookieHeader, authenticate, changeRequired, identify, startSession, setPassword, mintToken,
+    getUser, listTokenRows, deleteTokenById, deleteToken, throttled,
+    cookieHeader, authenticate, checkPassword, changeRequired, identify, startSession, setPassword, mintToken,
   } = core;
 
   // POST /api/login — body { email, password }.
-  function login(req: Request, res: Response) {
-    const user = authenticate(req, res);
+  async function login(req: Request, res: Response) {
+    const user = await authenticate(req, res);
     if (!user) return;
     startSession(res, user.id);
     res.json({ ok: true });
@@ -23,20 +23,17 @@ export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChang
   // POST /api/password — body { current, new }, from a signed-in browser (not an API token). Clears
   // a required change. The user's other browser sessions are signed out; this one and their API
   // tokens stay. Wrong current password is 403, not 401: a 401 would read as "signed out".
-  function changePassword(req: Request, res: Response) {
+  async function changePassword(req: Request, res: Response) {
     const session = identify(req);
     if (!session || session.kind !== 'session') return res.status(401).json({ error: 'sign in to change the password' });
     const ip = req.ip;
     if (throttled(ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
     const user = getUser.get(session.user.id)!; // the session's user exists: sessions cascade with it
     const current = typeof req.body?.current === 'string' ? req.body.current : '';
-    if (!verifyHash(current, user.password_hash)) {
-      recordFailure(ip);
-      return res.status(403).json({ error: 'wrong password' });
-    }
+    if (!await checkPassword(ip, current, user.password_hash)) return res.status(403).json({ error: 'wrong password' });
     const next = typeof req.body.new === 'string' ? req.body.new : '';
     if (next.length < MIN_PASSWORD) return res.status(400).json({ error: `new password must be at least ${MIN_PASSWORD} characters` });
-    setPassword(user.id, next, session.id);
+    await setPassword(user.id, next, session.id);
     notifyPasswordChanged(user, baseUrl(req));
     res.json({ ok: true });
   }
@@ -62,8 +59,8 @@ export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChang
 
   // POST /api/tokens — body { email, password, name }. Exchanges the credentials for a named API
   // token (scripts and the API; the extension connects through the site instead, see connect.ts).
-  function createToken(req: Request, res: Response) {
-    const user = authenticate(req, res);
+  async function createToken(req: Request, res: Response) {
+    const user = await authenticate(req, res);
     if (!user) return;
     if (user.must_change_password) return changeRequired(res);
     const name = typeof req.body.name === 'string' ? req.body.name.trim().slice(0, 100) : '';

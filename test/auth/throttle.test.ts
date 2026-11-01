@@ -38,4 +38,13 @@ describe('login throttle', () => {
       assert.equal((await c.post('/api/login', { email: 'throttle@example.com', password: 'throttle-pass-1' })).status, 200);
     }
   });
+
+  it('counts concurrent attempts while their hashes run', async () => {
+    const c = server.anon({ ip: '127.0.0.24' });
+    const statuses = (await Promise.all(Array.from({ length: 20 }, (_, i) =>
+      c.post('/api/login', { email: 'throttle@example.com', password: `burst-${i}` })))).map((r) => r.status);
+    assert.equal(statuses.filter((s) => s === 401).length, 10);
+    assert.equal(statuses.filter((s) => s === 429).length, 10);
+    assert.equal((await c.post('/api/login', { email: 'throttle@example.com', password: 'throttle-pass-1' })).status, 429);
+  });
 });

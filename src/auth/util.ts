@@ -69,11 +69,24 @@ export function sameOrigin(req: Request): boolean {
 
 // Salted scrypt, stored as salt:hash. Users carry their own; the `password_hash` setting
 // remembers PINNERY_PASSWORD so a changed value can be noticed on restart (see seed.ts).
-export const hashPassword = (pw: string) => {
+// Requests use the async pair, which runs scrypt on libuv's thread pool instead of the event loop.
+const scrypt = (pw: string, salt: string) => new Promise<Buffer>((resolve, reject) => {
+  crypto.scrypt(pw, salt, 32, (err, key) => (err ? reject(err) : resolve(key)));
+});
+export const hashPassword = async (pw: string) => {
+  const salt = hex(crypto.randomBytes(16));
+  return `${salt}:${hex(await scrypt(pw, salt))}`;
+};
+export const verifyHash = async (pw: string, stored: string | null) => {
+  const [salt, digest] = stored ? stored.split(':') : [];
+  return !!(salt && digest) && safeEqual(hex(await scrypt(pw, salt)), digest);
+};
+// Blocking versions, for startup only (seed.ts runs before the server listens).
+export const hashPasswordSync = (pw: string) => {
   const salt = hex(crypto.randomBytes(16));
   return `${salt}:${hex(crypto.scryptSync(pw, salt, 32))}`;
 };
-export const verifyHash = (pw: string, stored: string | null) => {
+export const verifyHashSync = (pw: string, stored: string | null) => {
   const [salt, digest] = stored ? stored.split(':') : [];
   return !!(salt && digest) && safeEqual(hex(crypto.scryptSync(pw, salt, 32)), digest);
 };
