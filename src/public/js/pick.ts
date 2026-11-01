@@ -1,5 +1,5 @@
 // The board picker the extension opens at /pick/<token> after it has sent the image. The token in
-// the URL is the only credential (see routes.js createPickRoutes). Lists boards most-recent first
+// the URL is the only credential (see routes.ts createPickRoutes). Lists boards most-recent first
 // so the last-used board is preselected, filters as you type, creates a board inline, and commits
 // or discards the parked image.
 //

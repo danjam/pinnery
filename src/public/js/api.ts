@@ -1,5 +1,5 @@
-// The shapes of what the server sends back, as the app uses them (see routes.js, auth.js,
-// users.js, transfer.js).
+// The shapes of what the server sends back, as the app uses them (see routes.ts, auth.ts,
+// users.ts, transfer.ts).
 export type Role = 'owner' | 'editor' | 'viewer';
 
 // A board as /api/boards/:id/pins reports it: the user's standing on it, and whose it is.

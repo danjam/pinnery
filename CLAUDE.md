@@ -8,7 +8,7 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 
 - Build: `npm run build` (`scripts/build.ts`) bundles the web app (`src/public`) and the extension (`extension/`) into `dist/` with esbuild; the server serves `dist/`, so rebuild after changing either. `npm start` and `npm test` build first. Entry points come from the pages' `<script src>` tags and the extension manifest, so a new script needs no build change.
 - Run: `PINNERY_ADMIN_EMAIL=admin@example.com PINNERY_PASSWORD=test-pass-1 DATA_DIR=<tmp> PORT=<port> node src/server.js`
-- Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public` and `extension`). CI runs it before the tests.
+- Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public`, its service worker (`tsconfig.sw.json`) and `extension`). CI runs it before the tests.
 - Test: `npm test` (node --test). Exercise UI changes against a throwaway instance.
 - `node scripts/icons.mjs` regenerates extension/app icons from `src/public/icon.svg`.
 
@@ -31,10 +31,10 @@ The extension isn't versioned separately: the server fingerprints `extension/` a
 - Server-side URL fetches go through the SSRF guard in `src/fetch.js`.
 - Extension and share-target saves upload first to `/api/pick/*`, where the image is parked in memory (`src/pending.js`). The server-hosted `/pick/<token>` page then chooses the board; its token is the page's only credential.
 - Mail is optional. Every emailed link needs a copy-the-link fallback. Links emailed to someone who isn't signed in (forgot password) must use `PINNERY_PUBLIC_URL`, never the request's Host header.
-- Redirects to a `?next=` path go through `safeNext` (`src/auth.js`) or `js/next.js` in pages; never redirect to it raw.
+- Redirects to a `?next=` path go through `safeNext` (`src/auth.js`) or `js/next.ts` in pages; never redirect to it raw.
 - The image runs on distroless Node as uid 1000, with a read-only filesystem except `/data`: no shell or npm at runtime, so never shell out (`child_process`) and only write under `DATA_DIR`.
-- Frontend is vanilla ES modules with no framework. Reuse `js/ui.js` (`el()`, dialogs, toasts), `js/icons.js` (MDI paths copied from `@mdi/js`) and the `css/app.css` tokens.
-- The CSP (`src/server.js`) only allows scripts from our own files: no inline `<script>` blocks or `on…=` attributes in pages. Put a page's script in `public/js/<page>.js`, and load `js/boot.js` first in `<head>` for the theme. `test/headers.test.js` fails on inline scripts.
+- Frontend is vanilla TypeScript with no framework, bundled per page by esbuild. Reuse `js/ui.ts` (`el()`, dialogs, toasts), `js/icons.ts` (MDI paths copied from `@mdi/js`) and the `css/app.css` tokens.
+- The CSP (`src/server.js`) only allows scripts from our own files: no inline `<script>` blocks or `on…=` attributes in pages. Put a page's script in `public/js/<page>.ts` (pages still load `/js/<page>.js`, the bundle), and load `/js/boot.js` (from `js/boot.ts`) first in `<head>` for the theme. `test/headers.test.js` fails on inline scripts.
 
 ## Conventions
 

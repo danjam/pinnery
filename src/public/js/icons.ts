@@ -1,6 +1,6 @@
 // Icons: SVG path data copied from Material Design Icons (https://pictogrammers.com/library/mdi/),
 // @mdi/js 7.4.47, Apache-2.0 — see NOTICE. Only the icons we use are kept here, so there is no
-// runtime dependency and no build step. The extension carries its own copy (extension/lib/icons.js).
+// runtime dependency. The extension carries its own copy (extension/lib/icons.ts).
 
 export const paths = {
   'alert-outline': 'M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16',
