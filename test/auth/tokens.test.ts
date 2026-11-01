@@ -90,6 +90,7 @@ describe('API tokens', () => {
   it('bogus and malformed bearer values are 401', async () => {
     assert.equal((await server.bearer('pn_' + '0'.repeat(64)).get('/api/me')).status, 401);
     assert.equal((await server.anon().get('/api/me')).status, 401);
+    assert.equal((await server.anon().json('/api/me', { headers: { authorization: 'Bearer ' } })).status, 401);
     assert.equal((await server.anon().get('/api/tokens')).status, 401);
     assert.equal((await server.anon().del('/api/tokens')).status, 401);
   });
