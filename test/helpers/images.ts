@@ -17,3 +17,6 @@ export const pngBuffer = (opts?: ImageOpts): Promise<Buffer> => blank(opts).png(
 
 // Same as pngBuffer, as a JPEG.
 export const jpegBuffer = (opts?: ImageOpts): Promise<Buffer> => blank(opts).jpeg().toBuffer();
+
+// Same as pngBuffer, as an AVIF.
+export const avifBuffer = (opts?: ImageOpts): Promise<Buffer> => blank(opts).avif().toBuffer();
