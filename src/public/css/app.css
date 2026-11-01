@@ -309,6 +309,8 @@ button, input, select {
 .settings-tabs a:hover { background: var(--surface-2); }
 .settings-tabs a[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .settings-footer { margin-top: var(--space-5); text-align: center; color: var(--muted); font-size: 13px; }
+.settings-footer a { text-decoration: none; }
+.settings-footer a:hover { text-decoration: underline; }
 .settings section {
   background: var(--surface);
   border: 1px solid var(--border);
