@@ -5,14 +5,14 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "main": "src/server.js",
+  "main": "src/server.ts",
   "scripts": {
     "build": "node scripts/build.ts",
     "typecheck": "tsc -p . && tsc -p src/public && tsc -p extension",
     "prestart": "npm run build",
-    "start": "node src/server.js",
+    "start": "node src/server.ts",
     "pretest": "npm run build",
-    "test": "node --test \"test/**/*.test.js\""
+    "test": "node --test \"test/**/*.test.ts\""
   },
   "engines": {
     "node": ">=24"
