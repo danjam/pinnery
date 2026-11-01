@@ -25,6 +25,7 @@ The extension isn't versioned separately: the server fingerprints `extension/` a
 - Server-side URL fetches go through the SSRF guard in `src/fetch.js`.
 - Extension and share-target saves upload first to `/api/pick/*`, where the image is parked in memory (`src/pending.js`). The server-hosted `/pick/<token>` page then chooses the board; its token is the page's only credential.
 - Mail is optional. Every emailed link needs a copy-the-link fallback.
+- The image runs on distroless Node as uid 1000, with a read-only filesystem except `/data`: no shell or npm at runtime, so never shell out (`child_process`) and only write under `DATA_DIR`.
 - Frontend is vanilla ES modules with no framework. Reuse `js/ui.js` (`el()`, dialogs, toasts), `js/icons.js` (MDI paths copied from `@mdi/js`) and the `css/app.css` tokens.
 
 ## Conventions
