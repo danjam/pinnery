@@ -210,9 +210,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return board;
   };
 
-  api.get('/users/directory', (req, res) => res.json(directory.all(req.user.id)));
+  // Other people's emails reach non-admins masked (d***@example.com) everywhere here (directory,
+  // share list, share reply): enough to tell apart two people with the same name, without giving
+  // out their addresses. Admins see them in full anyway (Settings → Users).
+  const maskEmail = (email: string) => {
+    const at = email.lastIndexOf('@');
+    return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
+  };
+  const emailsFor = <T extends { email: string }>(req: Request, rows: T[]): T[] =>
+    req.user.is_admin ? rows : rows.map((r) => ({ ...r, email: maskEmail(r.email) }));
 
-  api.get('/boards/:id/shares', (req, res) => res.json(listShares.all(ownedBoard(req).id)));
+  api.get('/users/directory', (req, res) => res.json(emailsFor(req, directory.all(req.user.id))));
+
+  api.get('/boards/:id/shares', (req, res) => res.json(emailsFor(req, listShares.all(ownedBoard(req).id))));
 
   // Body: { role: 'viewer' | 'editor' }. Answers with the share row; `added` says whether it's new.
   api.put('/boards/:id/shares/:userId', (req, res) => {
@@ -230,11 +240,11 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       mailer.send({ to: user.email, ...message({
         subject: `${req.user.display_name} shared “${board.name}” with you (${role === 'editor' ? 'Editor' : 'Viewer'})`,
         lines: [`Hi ${user.display_name},`,
-          `${req.user.display_name} (${req.user.email}) shared the Pinnery board “${board.name}” with you as ${role === 'editor' ? 'an editor: you can see its pins and add or delete them' : 'a viewer: you can see its pins'}.`],
+          `${req.user.display_name} shared the Pinnery board “${board.name}” with you as ${role === 'editor' ? 'an editor: you can see its pins and add or delete them' : 'a viewer: you can see its pins'}.`],
         link, linkText: 'Open the board',
       }) }).catch(() => {});
     }
-    res.json({ ...listShares.all(board.id).find((s) => s.user_id === user.id), added });
+    res.json({ ...emailsFor(req, listShares.all(board.id)).find((s) => s.user_id === user.id), added });
   });
 
   api.delete('/boards/:id/shares/:userId', (req, res) => {
