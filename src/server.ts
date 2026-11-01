@@ -67,7 +67,12 @@ if (mailer.enabled && !PUBLIC_URL) console.warn('mail: PINNERY_PUBLIC_URL is not
 const auth = createAuth(db, { password: PASSWORD, adminEmail: ADMIN_EMAIL, mailer, publicUrl: PUBLIC_URL });
 
 // Delete files no pin references (crash leftovers) and warn about pins whose original is missing.
+// Also clear the import spool: anything in it is from an import a crash or restart cut short.
 function sweep() {
+  const tmpDir = path.join(DATA_DIR, 'tmp');
+  const spooled = fs.existsSync(tmpDir) ? fs.readdirSync(tmpDir).length : 0;
+  fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (spooled) console.log(`sweep: removed ${spooled} leftover import file(s)`);
   const shas = db.prepare<[], { sha256: string }>('SELECT DISTINCT sha256 FROM pins').all().map((r) => r.sha256);
   const removed = store.sweep(new Set(shas));
   if (removed) console.log(`sweep: removed ${removed} orphaned file(s)`);
