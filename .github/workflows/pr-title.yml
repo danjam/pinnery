@@ -1,0 +1,24 @@
+name: PR title
+# Squash merges use the PR title as the commit on master, and release-please reads those commits
+# for the next version and CHANGELOG.md. So the title has to be a Conventional Commit:
+# "<type>(<optional scope>)!: <summary>", e.g. "fix: keep the sign-in cookie on reload".
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Check the title is a Conventional Commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|perf|refactor|docs|test|build|ci|chore|style|revert'
+          if [[ "$TITLE" =~ ^($types)(\([a-z0-9._/-]+\))?!?:\ [^[:space:]] ]]; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::PR title \"$TITLE\" isn't a Conventional Commit. Use \"<type>: <summary>\", where type is one of: ${types//|/, }."
+            exit 1
+          fi
