@@ -790,7 +790,7 @@ function tile(pin: Pin) {
   return t;
 }
 
-// The lightbox gets only the actions the user's role allows (see lightbox.js).
+// The lightbox gets only the actions the user's role allows (see lightbox.ts).
 function openPin(pin: Pin) {
   const pins = displayedPins().slice();
   const b = openBoard();

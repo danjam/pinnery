@@ -1,4 +1,4 @@
-// Android share target, step 2. The service worker (sw.js) parked the shared image in a cache and
+// Android share target, step 2. The service worker (sw.ts) parked the shared image in a cache and
 // sent us here; upload it as a pending pick and hand over to the board picker (/pick/<token>).
 
 import { el } from './ui.ts';
