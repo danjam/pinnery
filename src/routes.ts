@@ -142,16 +142,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     const board = id && access.ownsBoard(req.user.id, id);
     if (!board) throw notFound('board');
     const body = req.body || {};
-    if ('name' in body) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(cleanName(body.name), board.id);
+    // Check both fields before saving either, so a rejected request changes nothing.
+    const name = 'name' in body ? cleanName(body.name) : undefined;
+    let coverId: number | null | undefined;
     if ('cover_pin_id' in body) {
-      let coverId: number | null = null;
+      coverId = null;
       if (body.cover_pin_id !== null) {
         coverId = toId(body.cover_pin_id);
         const pin = coverId && getPin.get(coverId);
         if (!pin || pin.board_id !== board.id) throw bad('cover pin must belong to this board');
       }
-      db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, board.id);
     }
+    if (name !== undefined) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(name, board.id);
+    if (coverId !== undefined) db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, board.id);
     res.json(boardJson(readBoard(req.user.id, board.id)));
   });
 
