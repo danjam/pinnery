@@ -6,4 +6,6 @@ After 10 wrong passwords from one address, Pinnery blocks that address for up to
 - **Two proxies (e.g. Cloudflare, then Traefik):** `2`.
 - **No proxy:** `0`. If you leave it at `1` with no proxy, anyone can claim any address and get round the limit.
 
+The same address is used for a general cap of 1000 requests a minute, far above normal use.
+
 Pinnery also uses the proxy's `X-Forwarded-Proto` header to tell when visitors are on HTTPS, so it can mark the sign-in cookie secure.
