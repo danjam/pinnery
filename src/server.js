@@ -71,6 +71,25 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', Number(PROXIES));
 
+// Security headers on every response. Scripts only from our own files (no inline scripts, so an
+// injected <script> can't run), images from us or data: URLs (the accent favicon), and no framing
+// (clickjacking). Inline styles stay allowed: the UI sets style attributes, and CSS can't run code.
+// Routes that need something stricter (images, see routes.js) set their own CSP over this one.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+app.use((req, res, next) => {
+  res.set({ 'Content-Security-Policy': CSP, 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' });
+  next();
+});
+
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
 app.use('/css', express.static(path.join(publicDir, 'css'), { maxAge: 0 }));
