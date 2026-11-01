@@ -7,6 +7,12 @@
       "description": "Node base image updates ship in the image, so release them like runtime dependencies",
       "matchManagers": ["dockerfile"],
       "semanticCommitType": "fix"
+    },
+    {
+      "description": "Base images are pinned by digest and rebuilt upstream very often; batch those bumps weekly (each one is a release)",
+      "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest"],
+      "schedule": ["* 0-5 * * 1"]
     }
   ]
 }
