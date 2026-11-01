@@ -65,9 +65,10 @@ describe('zip64', () => {
     }
   });
 
-  it('reads sizes from the zip64 extra field, as other zip tools write them', () => {
-    // One stored entry whose central record has both sizes as 0xffffffff and the real ones in a
-    // zip64 extra field (built by hand: our writer never needs this).
+  // One stored entry, built by hand, whose central record has both sizes as 0xffffffff and the
+  // real ones in a zip64 extra field (`extra` overrides it). With `end64At`, a zip64 locator before
+  // the end record points there.
+  function handZip({ extra, end64At }: { extra?: Buffer; end64At?: number } = {}) {
     const name = Buffer.from('x.txt');
     const data = Buffer.from('zip64 sizes');
     const crc = zlib.crc32(data);
@@ -78,11 +79,13 @@ describe('zip64', () => {
     local.writeUInt32LE(data.length, 18);
     local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(name.length, 26);
-    const extra = Buffer.alloc(20);
-    extra.writeUInt16LE(0x0001, 0);
-    extra.writeUInt16LE(16, 2);
-    extra.writeBigUInt64LE(BigInt(data.length), 4);
-    extra.writeBigUInt64LE(BigInt(data.length), 12);
+    if (!extra) {
+      extra = Buffer.alloc(20);
+      extra.writeUInt16LE(0x0001, 0);
+      extra.writeUInt16LE(16, 2);
+      extra.writeBigUInt64LE(BigInt(data.length), 4);
+      extra.writeBigUInt64LE(BigInt(data.length), 12);
+    }
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(45, 6);
@@ -93,20 +96,62 @@ describe('zip64', () => {
     central.writeUInt16LE(extra.length, 30);
     const body = Buffer.concat([local, name, data]);
     const cd = Buffer.concat([central, name, extra]);
+    const locator = Buffer.alloc(end64At === undefined ? 0 : 20);
+    if (end64At !== undefined) {
+      locator.writeUInt32LE(0x07064b50, 0);
+      locator.writeBigUInt64LE(BigInt(end64At), 8);
+      locator.writeUInt32LE(1, 16);
+    }
     const eocd = Buffer.alloc(22);
     eocd.writeUInt32LE(0x06054b50, 0);
     eocd.writeUInt16LE(1, 8);
     eocd.writeUInt16LE(1, 10);
     eocd.writeUInt32LE(cd.length, 12);
     eocd.writeUInt32LE(body.length, 16);
-    const file = path.join(dir, 'sizes.zip');
-    fs.writeFileSync(file, Buffer.concat([body, cd, eocd]));
-    const z = openZipFile(file);
+    return { data, zip: Buffer.concat([body, cd, locator, eocd]) };
+  }
+
+  const open = (name: string, zip: Buffer) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, zip);
+    return openZipFile(file);
+  };
+
+  it('reads sizes from the zip64 extra field, as other zip tools write them', () => {
+    const { zip, data } = handZip();
+    const z = open('sizes.zip', zip);
     try {
       assert.equal(z.entries[0].size, data.length);
       assert.deepEqual(z.read(z.entries[0]), data);
     } finally {
       z.close();
     }
+    // after another extra field, as Info-ZIP writes them (a 5-byte extended timestamp first)
+    const ts = Buffer.from([0x55, 0x54, 0x05, 0x00, 0x01, 0, 0, 0, 0]);
+    const field = Buffer.alloc(20);
+    field.writeUInt16LE(0x0001, 0);
+    field.writeUInt16LE(16, 2);
+    field.writeBigUInt64LE(BigInt(data.length), 4);
+    field.writeBigUInt64LE(BigInt(data.length), 12);
+    const z2 = open('sizes-after-ts.zip', handZip({ extra: Buffer.concat([ts, field]) }).zip);
+    try {
+      assert.deepEqual(z2.read(z2.entries[0]), data);
+    } finally {
+      z2.close();
+    }
+  });
+
+  it('refuses malformed zip64 records', () => {
+    // sizes marked as zip64 with no zip64 field to read them from
+    assert.throws(() => open('no-extra.zip', handZip({ extra: Buffer.alloc(0) }).zip), /x\.txt: missing zip64 sizes/);
+    // a size past what a Number holds exactly
+    const huge = Buffer.alloc(20);
+    huge.writeUInt16LE(0x0001, 0);
+    huge.writeUInt16LE(16, 2);
+    huge.writeBigUInt64LE(2n ** 60n, 4);
+    huge.writeBigUInt64LE(11n, 12);
+    assert.throws(() => open('huge.zip', handZip({ extra: huge }).zip), /not a valid zip file/);
+    // a locator pointing at something that isn't a zip64 end record
+    assert.throws(() => open('bad-end64.zip', handZip({ end64At: 0 }).zip), /not a valid zip file/);
   });
 });
