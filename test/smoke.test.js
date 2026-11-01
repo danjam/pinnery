@@ -55,7 +55,7 @@ describe('harness (mail off)', () => {
   });
 
   test('mail is off', async () => {
-    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: false });
+    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: false, reset: false });
   });
 
   test('image helpers produce real images', async () => {
