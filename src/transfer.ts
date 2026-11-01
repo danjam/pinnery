@@ -20,7 +20,7 @@ import type { ZipEntry, ZipFile } from './zip.ts';
 
 const FORMAT_VERSION = 1;
 // The archive is spooled to disk, not memory. Exports past 4 GiB are zip64, so imports go beyond it too.
-const IMPORT_MAX_BYTES = 64 * 1024 ** 3;
+const IMPORT_MAX_BYTES = 16 * 1024 ** 3;
 const MANIFEST_MAX_BYTES = 32 * 1024 * 1024;
 
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
