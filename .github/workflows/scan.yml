@@ -30,6 +30,7 @@ jobs:
         with:
           image-ref: ${{ inputs.image-ref || format('ghcr.io/{0}:latest', github.repository) }}
           severity: HIGH,CRITICAL
+          limit-severities-for-sarif: true # otherwise SARIF output ignores severity and lists everything
           ignore-unfixed: true
           format: sarif
           output: trivy.sarif
