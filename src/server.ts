@@ -6,7 +6,7 @@ import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
 import { openDb, SchemaError } from './db.ts';
 import type { Db } from './db.ts';
-import { createAuth, safeNext, parseConnectParams } from './auth.ts';
+import { createAuth, safeNext, parseConnectParams, sameOrigin, COOKIE } from './auth.ts';
 import { createMailer } from './mail.ts';
 import { createStore, ImageError } from './images.ts';
 import { createRoutes, createImageRoutes } from './routes.ts';
@@ -111,6 +111,25 @@ app.use(rateLimit({
   message: { error: 'too many requests, try again shortly' },
 }));
 
+// CSRF: SameSite=Lax counts every subdomain of the same registrable domain as same-site, so a
+// sibling app (or an XSS in one) on *.example.com could still send the session cookie with a form
+// POST. Writes that carry the cookie must come from our own pages (sameOrigin, auth/util.ts); so
+// must sign-in and sign-out, which have no session yet (login CSRF), so those two routes add the
+// check themselves (refuseCrossSite) rather than this matching their paths, which routing doesn't
+// match exactly (case, trailing slash). Bearer tokens aren't sent by browsers on their own, so
+// they're exempt. The cookie is matched in the raw header, not parsed: an unparseable cookie must
+// not decide whether the check runs.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const sessionCookieRe = new RegExp(`(?:^|;)\\s*${COOKIE}=`);
+const refuseCrossSite = (req: Request, res: Response, next: NextFunction) => {
+  if (SAFE_METHODS.has(req.method) || req.get('authorization')?.startsWith('Bearer ') || sameOrigin(req)) return next();
+  res.status(403).json({ error: 'cross-site request refused' });
+};
+app.use((req, res, next) => {
+  if (!sessionCookieRe.test(req.get('cookie') || '')) return next();
+  refuseCrossSite(req, res, next);
+});
+
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
 app.use('/css', express.static(path.join(publicDir, 'css'), { maxAge: 0 }));
@@ -129,8 +148,8 @@ app.get('/login', (req, res) => {
   if (session) return res.redirect(302, session.user.must_change_password ? `/password?next=${encodeURIComponent(next)}` : next);
   res.sendFile(path.join(publicDir, 'login.html'));
 });
-app.post('/api/login', express.json({ limit: '4kb' }), express.urlencoded({ extended: false, limit: '4kb' }), auth.login);
-app.post('/api/logout', auth.logout);
+app.post('/api/login', refuseCrossSite, express.json({ limit: '4kb' }), express.urlencoded({ extended: false, limit: '4kb' }), auth.login);
+app.post('/api/logout', refuseCrossSite, auth.logout);
 // "Choose a new password": where a required change is made (also reachable by choice). Everything
 // else is closed until it's done — see requireApi/requirePage in auth.ts.
 app.get('/password', (req, res) => {
