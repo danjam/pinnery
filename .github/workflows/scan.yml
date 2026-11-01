@@ -1,0 +1,41 @@
+name: Scan
+# Scans the published image for known vulnerabilities that have a fix, and sends the results to the
+# repo's Security tab (code scanning), where each one becomes an alert. Runs after every release
+# (called from release.yml) and weekly, since new holes are found in images that haven't changed.
+# Never fails the run: the alerts are the output.
+
+on:
+  schedule:
+    - cron: '30 6 * * 1' # Mondays 06:30 UTC
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      image-ref:
+        description: Image to scan, e.g. ghcr.io/danjam/pinnery@sha256:…
+        type: string
+        required: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+
+      # Pinned by commit, not tag: trivy-action's version tags were hijacked in March 2026
+      # (GHSA-69fq-xp46-6x23).
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ inputs.image-ref || format('ghcr.io/{0}:latest', github.repository) }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy.sarif
+          exit-code: '0'
+
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-image
