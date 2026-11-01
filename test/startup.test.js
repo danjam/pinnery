@@ -29,7 +29,7 @@ describe('startup', () => {
       PINNERY_ADMIN_EMAIL: 'admin@example.com',
       PINNERY_PASSWORD: 'initial-pass-1',
     };
-    child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -52,7 +52,7 @@ describe('PINNERY_PROXIES not a number', () => {
       PINNERY_PASSWORD: 'initial-pass-1',
       PINNERY_PROXIES: 'true',
     };
-    const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => child.kill('SIGKILL'));
     let out = '';
     child.stderr.on('data', (d) => { out += d; });
@@ -73,7 +73,7 @@ describe('shutdown', () => {
       PINNERY_ADMIN_EMAIL: 'admin@example.com',
       PINNERY_PASSWORD: 'initial-pass-1',
     };
-    const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => child.kill('SIGKILL'));
     let out = '';
     const listening = new Promise((resolve) => {

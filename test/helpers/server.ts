@@ -17,7 +17,7 @@ import type { MailSink } from './mail.ts';
 //   const { status, body } = await bob.json('/api/me');   // { status: 200, body: { email: 'bob@example.com', ... } }
 //   await server.stop();
 //
-// Throttle budget (src/auth.js). Counters are per server instance and keyed on the client IP, and
+// Throttle budget (src/auth.ts). Counters are per server instance and keyed on the client IP, and
 // every client here is 127.0.0.1, so ALL clients of one server share them:
 //   - 10 failed credential checks per 15 min, shared by POST /api/login, POST /api/tokens,
 //     POST /api/password (wrong `current`) and POST /api/email (wrong password) -> then 429.
@@ -220,14 +220,14 @@ async function startOnce({ env = {}, mail = false }: StartOpts): Promise<Server>
       PINNERY_SMTP_PORT: String(sink.port),
       PINNERY_SMTP_SECURE: 'false', // plain SMTP; the sink offers no STARTTLS either
       PINNERY_SMTP_FROM: 'Pinnery <pinnery@example.com>',
-      // "Forgot password" only emails links when this is set (see selfReset in auth.js).
+      // "Forgot password" only emails links when this is set (see selfReset in auth.ts).
       PINNERY_PUBLIC_URL: `http://127.0.0.1:${port}`,
     });
   }
   Object.assign(childEnv, env);
 
   let out = '';
-  const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   const collect = (d: Buffer | string): void => { out += d; };
   child.stdout.on('data', collect);
   child.stderr.on('data', collect);

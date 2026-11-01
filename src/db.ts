@@ -2,12 +2,46 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
+export type Db = Database.Database;
+
+// Rows as the schema below stores them. SQLite has no boolean: flags are 0 | 1.
+export interface UserRow {
+  id: number;
+  email: string;
+  display_name: string;
+  password_hash: string;
+  is_admin: number;
+  must_change_password: number;
+  created_at: string;
+}
+
+export interface BoardRow {
+  id: number;
+  name: string;
+  owner_id: number;
+  cover_pin_id: number | null;
+  created_at: string;
+}
+
+export interface PinRow {
+  id: number;
+  board_id: number;
+  sha256: string;
+  width: number;
+  height: number;
+  mime: string;
+  animated: number;
+  source_url: string | null;
+  page_title: string | null;
+  created_at: string;
+}
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
   id                    INTEGER PRIMARY KEY,
   email                 TEXT NOT NULL UNIQUE,     -- trimmed and lowercased
   display_name          TEXT NOT NULL,
-  password_hash         TEXT NOT NULL,            -- salt:scrypt, see auth.js
+  password_hash         TEXT NOT NULL,            -- salt:scrypt, see auth.ts
   is_admin              INTEGER NOT NULL DEFAULT 0,
   must_change_password  INTEGER NOT NULL DEFAULT 0,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
@@ -37,7 +71,7 @@ CREATE INDEX IF NOT EXISTS pins_board ON pins(board_id, id);
 CREATE INDEX IF NOT EXISTS pins_sha256 ON pins(sha256);
 
 -- A board shared with another user: a viewer looks, an editor also adds and deletes pins in it.
--- Everything else stays the owner's (see access.js). Goes with the board or the user.
+-- Everything else stays the owner's (see access.ts). Goes with the board or the user.
 CREATE TABLE IF NOT EXISTS board_shares (
   board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
   user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -47,7 +81,7 @@ CREATE TABLE IF NOT EXISTS board_shares (
 );
 CREATE INDEX IF NOT EXISTS board_shares_user ON board_shares(user_id);
 
--- Key/value: password_hash (the PINNERY_PASSWORD last seen) and seed_admin_id (see auth.js).
+-- Key/value: password_hash (the PINNERY_PASSWORD last seen) and seed_admin_id (see auth.ts).
 CREATE TABLE IF NOT EXISTS settings (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL
@@ -80,7 +114,7 @@ CREATE TABLE IF NOT EXISTS email_tokens (
 CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens(user_id, kind);
 `;
 
-export function openDb(dataDir) {
+export function openDb(dataDir: string): Db {
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new Database(path.join(dataDir, 'pinnery.db'));
   db.pragma('journal_mode = WAL');
@@ -93,13 +127,15 @@ export function openDb(dataDir) {
   return db;
 }
 
-const hasColumn = (db, table, column) => db.pragma(`table_info(${table})`).some((c) => c.name === column);
+// table_info lists nothing for a table that doesn't exist (yet).
+const columnsOf = (db: Db, table: string) => db.pragma(`table_info(${table})`) as { name: string }[];
+const hasColumn = (db: Db, table: string, column: string) => columnsOf(db, table).some((c) => c.name === column);
 
 // A database from before accounts: it has sessions, but they belong to nobody. Snapshot it before
 // the schema changes below, to <dataDir>/backups/pre-accounts-<timestamp>.db.
-const preAccounts = (db) => db.pragma('table_info(sessions)').length > 0 && !hasColumn(db, 'sessions', 'user_id');
+const preAccounts = (db: Db) => columnsOf(db, 'sessions').length > 0 && !hasColumn(db, 'sessions', 'user_id');
 
-function backup(db, dataDir) {
+function backup(db: Db, dataDir: string) {
   const dir = path.join(dataDir, 'backups');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `pre-accounts-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
@@ -107,23 +143,23 @@ function backup(db, dataDir) {
   console.log(`accounts: backed up the database to ${file}`);
 }
 
-function migrate(db) {
+function migrate(db: Db) {
   // Databases from before duplicate detection was removed carry a NOT NULL dhash column and a
   // dupe_threshold setting; neither is written any more.
   if (hasColumn(db, 'pins', 'dhash')) db.exec('ALTER TABLE pins DROP COLUMN dhash');
   db.prepare("DELETE FROM settings WHERE key = 'dupe_threshold'").run();
   // Databases from before accounts get the owner columns nullable (SQLite can't add a NOT NULL
-  // foreign key to an existing table); auth.js fills them in when it seeds the admin.
+  // foreign key to an existing table); auth.ts fills them in when it seeds the admin.
   if (!hasColumn(db, 'boards', 'owner_id')) db.exec('ALTER TABLE boards ADD COLUMN owner_id INTEGER REFERENCES users(id)');
   if (!hasColumn(db, 'sessions', 'user_id')) db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
 }
 
-export function getSetting(db, key) {
-  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+export function getSetting(db: Db, key: string): string | null {
+  const row = db.prepare<[string], { value: string }>('SELECT value FROM settings WHERE key = ?').get(key);
   return row ? row.value : null;
 }
 
-export function setSetting(db, key, value) {
+export function setSetting(db: Db, key: string, value: string | number | bigint) {
   db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, String(value));
 }

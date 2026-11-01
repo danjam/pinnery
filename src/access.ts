@@ -4,7 +4,18 @@
 // pins in it. Renaming, deleting, the cover, sharing, export and moving pins out stay the owner's.
 // Unknown ids and other people's ids look the same to a caller: null.
 
-export function createAccess(db) {
+import type { BoardRow, Db, PinRow } from './db.ts';
+
+// A board as access hands it out: the user's standing on it and whose it is, for the UI.
+export type BoardRole = 'owner' | 'editor' | 'viewer';
+export interface AccessBoard extends BoardRow {
+  role: BoardRole;
+  owner_name: string | null;
+}
+
+export type Access = ReturnType<typeof createAccess>;
+
+export function createAccess(db: Db) {
   // Fragments over `boards b`, the user bound as @user. Parenthesised: callers append them with AND.
   const OWNS = '(b.owner_id = @user)';
   const shared = (extra = '') => `EXISTS (SELECT 1 FROM board_shares s WHERE s.board_id = b.id AND s.user_id = @user${extra})`;
@@ -17,21 +28,23 @@ export function createAccess(db) {
   const BOARD = `b.id, b.name, b.owner_id, b.cover_pin_id, b.created_at, ${ROLE}`;
   const PIN = 'p.id, p.board_id, p.sha256, p.width, p.height, p.mime, p.animated, p.source_url, p.page_title, p.created_at';
 
-  const boardWhere = (rule) => db.prepare(`SELECT ${BOARD} FROM boards b WHERE b.id = @id AND ${rule}`);
+  type ByUser = { user: number; id: number };
+  const boardWhere = (rule: string) => db.prepare<ByUser, AccessBoard>(`SELECT ${BOARD} FROM boards b WHERE b.id = @id AND ${rule}`);
   const seeBoard = boardWhere(SEES);
   const editBoard = boardWhere(EDITS);
   const ownBoard = boardWhere(OWNS);
 
-  const seePin = db.prepare(`SELECT ${PIN} FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id = @id AND ${SEES}`);
+  const seePin = db.prepare<ByUser, PinRow>(`SELECT ${PIN} FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id = @id AND ${SEES}`);
   // How many of a list of pins sit on boards matching the rule — a bulk caller wants all of them.
-  const pinsMatching = (rule, userId, ids) => db.prepare(
+  // (COUNT without GROUP BY always yields a row.)
+  const pinsMatching = (rule: string, userId: number, ids: number[]) => db.prepare<unknown[], { n: number }>(
     `SELECT COUNT(*) AS n FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id IN (${Array(ids.length).fill('?').join(',')}) AND ${rule}`,
-  ).get(...ids, { user: userId }).n;
+  ).get(...ids, { user: userId })!.n;
 
   // An image is visible when some pin on a visible board carries its hash.
-  const seeSha = db.prepare(`SELECT p.mime FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.sha256 = @sha AND ${SEES} LIMIT 1`);
+  const seeSha = db.prepare<{ sha: string; user: number }, { mime: string }>(`SELECT p.mime FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.sha256 = @sha AND ${SEES} LIMIT 1`);
   // A cover (chosen, else newest pin) of a visible board — all the pick page may show.
-  const seeCoverSha = db.prepare(`
+  const seeCoverSha = db.prepare<{ sha: string; user: number }>(`
     SELECT 1 FROM boards b
     JOIN pins p ON p.id = COALESCE(b.cover_pin_id, (SELECT id FROM pins WHERE board_id = b.id ORDER BY id DESC LIMIT 1))
     WHERE p.sha256 = @sha AND ${SEES} LIMIT 1`);
@@ -41,14 +54,14 @@ export function createAccess(db) {
     EDITS,
     OWNS,
     ROLE,
-    canSeeBoard: (userId, boardId) => seeBoard.get({ user: userId, id: boardId }) ?? null,
-    canEditBoard: (userId, boardId) => editBoard.get({ user: userId, id: boardId }) ?? null,
-    ownsBoard: (userId, boardId) => ownBoard.get({ user: userId, id: boardId }) ?? null,
-    canSeePin: (userId, pinId) => seePin.get({ user: userId, id: pinId }) ?? null,
+    canSeeBoard: (userId: number, boardId: number) => seeBoard.get({ user: userId, id: boardId }) ?? null,
+    canEditBoard: (userId: number, boardId: number) => editBoard.get({ user: userId, id: boardId }) ?? null,
+    ownsBoard: (userId: number, boardId: number) => ownBoard.get({ user: userId, id: boardId }) ?? null,
+    canSeePin: (userId: number, pinId: number) => seePin.get({ user: userId, id: pinId }) ?? null,
     // True when every id is a pin on a board the user may edit (delete from) or owns (move out of).
-    canEditPins: (userId, ids) => pinsMatching(EDITS, userId, ids) === ids.length,
-    ownsPins: (userId, ids) => pinsMatching(OWNS, userId, ids) === ids.length,
-    canSeeSha: (userId, sha) => seeSha.get({ user: userId, sha }) ?? null,
-    canSeeCoverSha: (userId, sha) => !!seeCoverSha.get({ user: userId, sha }),
+    canEditPins: (userId: number, ids: number[]) => pinsMatching(EDITS, userId, ids) === ids.length,
+    ownsPins: (userId: number, ids: number[]) => pinsMatching(OWNS, userId, ids) === ids.length,
+    canSeeSha: (userId: number, sha: string) => seeSha.get({ user: userId, sha }) ?? null,
+    canSeeCoverSha: (userId: number, sha: string) => !!seeCoverSha.get({ user: userId, sha }),
   };
 }

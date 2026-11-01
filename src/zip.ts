@@ -9,14 +9,14 @@ const SIG_LOCAL = 0x04034b50;
 const SIG_CENTRAL = 0x02014b50;
 const SIG_END = 0x06054b50;
 
-function dosDateTime(d) {
+function dosDateTime(d: Date) {
   const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
   const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
   return { time, date };
 }
 
-export function walk(dir, rel = '') {
-  const out = [];
+export function walk(dir: string, rel = ''): string[] {
+  const out: string[] = [];
   for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
     const relPath = rel ? `${rel}/${entry.name}` : entry.name;
     if (entry.isDirectory()) out.push(...walk(path.join(dir, entry.name), relPath));
@@ -31,23 +31,30 @@ export function walk(dir, rel = '') {
 // HTTP response). `add` resolves once the entry is handed to the sink, honouring backpressure;
 // `end` writes the central directory and returns the total size. Entries are deflated unless
 // `compress` is false (already-compressed images: storing is faster and no bigger).
-export function createZipWriter(sink) {
+export interface ZipSink {
+  write(buf: Buffer): boolean;
+  // Only a sink whose write() can return false needs these.
+  on?(event: 'drain' | 'close', listener: () => void): unknown;
+  off?(event: 'drain' | 'close', listener: () => void): unknown;
+}
+
+export function createZipWriter(sink: ZipSink) {
   const { time, date } = dosDateTime(new Date());
-  const centrals = [];
+  const centrals: Buffer[] = [];
   let offset = 0;
 
   // Wait for 'drain' when the sink is full — or 'close', so a dropped connection can't hang us.
-  async function write(buf) {
+  async function write(buf: Buffer) {
     offset += buf.length;
     if (sink.write(buf)) return;
-    await new Promise((resolve) => {
-      const done = () => { sink.off('drain', done); sink.off('close', done); resolve(); };
-      sink.on('drain', done);
-      sink.on('close', done);
+    await new Promise<void>((resolve) => {
+      const done = () => { sink.off?.('drain', done); sink.off?.('close', done); resolve(); };
+      sink.on?.('drain', done);
+      sink.on?.('close', done);
     });
   }
 
-  async function add(entryName, data, { compress = true } = {}) {
+  async function add(entryName: string, data: Buffer, { compress = true }: { compress?: boolean } = {}) {
     const name = Buffer.from(entryName, 'utf8');
     const method = compress ? 8 : 0;
     const body = compress ? zlib.deflateRawSync(data, { level: 9 }) : data;
@@ -110,8 +117,8 @@ export function createZipWriter(sink) {
 
 // Zip every file under `dir`, stored beneath `prefix/` inside the archive. Returns a Buffer.
 // `transform(rel, buf)` may return replacement bytes for a file (e.g. to stamp the manifest).
-export async function zipDirectory(dir, prefix, transform = (rel, buf) => buf) {
-  const chunks = [];
+export async function zipDirectory(dir: string, prefix: string, transform: (rel: string, buf: Buffer) => Buffer = (rel, buf) => buf): Promise<Buffer> {
+  const chunks: Buffer[] = [];
   const zip = createZipWriter({ write: (b) => { chunks.push(b); return true; } });
   for (const rel of walk(dir)) await zip.add(`${prefix}/${rel}`, transform(rel, fs.readFileSync(path.join(dir, rel))));
   await zip.end();
@@ -123,7 +130,7 @@ export async function zipDirectory(dir, prefix, transform = (rel, buf) => buf) {
 export class ZipError extends Error {}
 
 // A relative path with no traversal: no leading slash, drive letter, backslash, NUL, or `.`/`..` segment.
-export function isSafeZipPath(name) {
+export function isSafeZipPath(name: unknown): name is string {
   if (typeof name !== 'string' || !name || name.length > 1024) return false;
   if (name.startsWith('/') || /[\\\0]/.test(name) || /^[A-Za-z]:/.test(name)) return false;
   return name.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
@@ -132,11 +139,22 @@ export function isSafeZipPath(name) {
 // Open a zip file on disk. Entries come from the central directory; `read(entry)` returns the
 // inflated bytes (checked against the recorded CRC). Directory entries are left out. Throws
 // ZipError for anything malformed or unsupported (encryption, zip64, other compression methods).
-export function openZipFile(file, { maxEntrySize = Infinity } = {}) {
+export interface ZipEntry {
+  name: string;
+  method: number;
+  crc: number;
+  compressedSize: number;
+  size: number;
+  offset: number;
+}
+
+export type ZipFile = ReturnType<typeof openZipFile>;
+
+export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntrySize?: number } = {}) {
   const fd = fs.openSync(file, 'r');
   const size = fs.fstatSync(fd).size;
 
-  function readAt(pos, len) {
+  function readAt(pos: number, len: number) {
     if (pos < 0 || len < 0 || pos + len > size) throw new ZipError('not a valid zip file');
     const buf = Buffer.alloc(len);
     let done = 0;
@@ -162,7 +180,7 @@ export function openZipFile(file, { maxEntrySize = Infinity } = {}) {
     if (count === 0xffff || cdSize === 0xffffffff || cdOffset === 0xffffffff) throw new ZipError('zip64 archives are not supported');
 
     const cd = readAt(cdOffset, cdSize);
-    const entries = [];
+    const entries: ZipEntry[] = [];
     let p = 0;
     for (let i = 0; i < count; i++) {
       if (p + 46 > cd.length || cd.readUInt32LE(p) !== SIG_CENTRAL) throw new ZipError('not a valid zip file');
@@ -184,13 +202,13 @@ export function openZipFile(file, { maxEntrySize = Infinity } = {}) {
       entries.push({ name, method, crc, compressedSize, size: uncompressedSize, offset });
     }
 
-    function read(entry) {
+    function read(entry: ZipEntry): Buffer {
       if (entry.size > maxEntrySize) throw new ZipError(`${entry.name}: too large`);
       const local = readAt(entry.offset, 30);
       if (local.readUInt32LE(0) !== SIG_LOCAL) throw new ZipError('not a valid zip file');
       const dataStart = entry.offset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
       const raw = readAt(dataStart, entry.compressedSize);
-      let data;
+      let data: Buffer;
       try {
         data = entry.method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, entry.size) }) : raw;
       } catch {

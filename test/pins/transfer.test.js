@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
 import { newBoard, upload } from '../helpers/pins.ts';
-import { createZipWriter } from '../../src/zip.js';
+import { createZipWriter } from '../../src/zip.ts';
 
 // Build a zip in memory with the app's own writer.
 async function makeZip(entries) {

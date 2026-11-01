@@ -4,12 +4,29 @@
 // the image is sent again.
 
 import crypto from 'node:crypto';
+import type { Fingerprint } from './images.ts';
 
-export function createPending({ ttlMs = 10 * 60 * 1000, maxBytes = 256 * 1024 * 1024 } = {}) {
-  const entries = new Map(); // token -> { buf, info, meta, userId, expires }
+// What a pin takes from the page it was saved from.
+export interface PinMeta {
+  source_url: string | null;
+  page_title: string | null;
+}
+
+export interface PendingEntry {
+  buf: Buffer;
+  info: Fingerprint;
+  meta: PinMeta;
+  userId: number;
+  expires: number;
+}
+
+export type Pending = ReturnType<typeof createPending>;
+
+export function createPending({ ttlMs = 10 * 60 * 1000, maxBytes = 256 * 1024 * 1024 }: { ttlMs?: number; maxBytes?: number } = {}) {
+  const entries = new Map<string, PendingEntry>();
   let total = 0;
 
-  function drop(token) {
+  function drop(token: string): PendingEntry | null {
     const e = entries.get(token);
     if (!e) return null;
     entries.delete(token);
@@ -27,7 +44,7 @@ export function createPending({ ttlMs = 10 * 60 * 1000, maxBytes = 256 * 1024 * 
     }
   }
 
-  function put(record) {
+  function put(record: Omit<PendingEntry, 'expires'>): string {
     const token = crypto.randomBytes(16).toString('hex');
     total += record.buf.length;
     entries.set(token, { ...record, expires: Date.now() + ttlMs });
@@ -35,14 +52,14 @@ export function createPending({ ttlMs = 10 * 60 * 1000, maxBytes = 256 * 1024 * 
     return token;
   }
 
-  function get(token) {
+  function get(token: string): PendingEntry | null {
     const e = entries.get(token);
     if (e && e.expires <= Date.now()) { drop(token); return null; }
     return e || null;
   }
 
   // Remove and return the entry, or null if it's unknown or expired.
-  const take = (token) => (get(token) ? drop(token) : null);
+  const take = (token: string) => (get(token) ? drop(token) : null);
 
   return { put, get, take, drop };
 }

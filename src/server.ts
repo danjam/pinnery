@@ -2,14 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
-import { openDb } from './db.js';
-import { createAuth, safeNext, parseConnectParams } from './auth.js';
-import { createMailer } from './mail.js';
-import { createStore, ImageError } from './images.js';
-import { createRoutes, createImageRoutes } from './routes.js';
-import { createUserRoutes } from './users.js';
-import { zipDirectory, walk } from './zip.js';
-import { rootDir, publicDir, extensionDir } from './paths.js';
+import type { NextFunction, Request, Response } from 'express';
+import { openDb } from './db.ts';
+import { createAuth, safeNext, parseConnectParams } from './auth.ts';
+import { createMailer } from './mail.ts';
+import { createStore, ImageError } from './images.ts';
+import { createRoutes, createImageRoutes } from './routes.ts';
+import { createUserRoutes } from './users.ts';
+import { zipDirectory, walk } from './zip.ts';
+import { rootDir, publicDir, extensionDir } from './paths.ts';
 
 const PORT = Number(process.env.PORT) || 3420;
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -27,7 +28,7 @@ if (!/^\d+$/.test(PROXIES)) {
   process.exit(1);
 }
 
-// Together they create the first (admin) account on first start; see auth.js.
+// Together they create the first (admin) account on first start; see auth.ts.
 const missing = [['PINNERY_ADMIN_EMAIL', ADMIN_EMAIL], ['PINNERY_PASSWORD', PASSWORD]].filter(([, v]) => !v).map(([k]) => k);
 if (missing.length) {
   console.error(`${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} not set — refusing to start`);
@@ -44,9 +45,9 @@ const EXTENSION_FINGERPRINT = (() => {
   for (const rel of walk(extensionDir)) h.update(rel).update('\0').update(fs.readFileSync(path.join(extensionDir, rel))).update('\0');
   return h.digest('hex').slice(0, 12);
 })();
-const stampManifest = (rel, buf) => {
+const stampManifest = (rel: string, buf: Buffer): Buffer => {
   if (rel !== 'manifest.json') return buf;
-  const m = JSON.parse(buf.toString('utf8'));
+  const m: { version: string; version_name?: string } = JSON.parse(buf.toString('utf8'));
   m.version_name = `${m.version}+${EXTENSION_FINGERPRINT}`;
   return Buffer.from(`${JSON.stringify(m, null, 2)}\n`);
 };
@@ -58,7 +59,7 @@ const auth = createAuth(db, { password: PASSWORD, adminEmail: ADMIN_EMAIL, maile
 
 // Delete files no pin references (crash leftovers) and warn about pins whose original is missing.
 function sweep() {
-  const shas = db.prepare('SELECT DISTINCT sha256 FROM pins').all().map((r) => r.sha256);
+  const shas = db.prepare<[], { sha256: string }>('SELECT DISTINCT sha256 FROM pins').all().map((r) => r.sha256);
   const removed = store.sweep(new Set(shas));
   if (removed) console.log(`sweep: removed ${removed} orphaned file(s)`);
   const missing = shas.filter((s) => !store.original(s));
@@ -72,7 +73,7 @@ app.set('trust proxy', Number(PROXIES));
 // Security headers on every response. Scripts only from our own files (no inline scripts, so an
 // injected <script> can't run), images from us or data: URLs (the accent favicon), and no framing
 // (clickjacking). Inline styles stay allowed: the UI sets style attributes, and CSS can't run code.
-// Routes that need something stricter (images, see routes.js) set their own CSP over this one.
+// Routes that need something stricter (images, see routes.ts) set their own CSP over this one.
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -109,7 +110,7 @@ app.get('/login', (req, res) => {
 app.post('/api/login', express.json({ limit: '4kb' }), express.urlencoded({ extended: false, limit: '4kb' }), auth.login);
 app.post('/api/logout', auth.logout);
 // "Choose a new password": where a required change is made (also reachable by choice). Everything
-// else is closed until it's done — see requireApi/requirePage in auth.js.
+// else is closed until it's done — see requireApi/requirePage in auth.ts.
 app.get('/password', (req, res) => {
   const session = auth.identify(req);
   if (!session) return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl)}`);
@@ -122,10 +123,10 @@ app.patch('/api/me', express.json({ limit: '4kb' }), auth.requireApi, auth.updat
 // Email + password in, API token out, for scripts and the API. Same throttle as login.
 app.post('/api/tokens', express.json({ limit: '4kb' }), auth.createToken);
 
-// Emailed links (auth.js): each has a page that reads the token from its URL and a public API pair,
+// Emailed links (auth.ts): each has a page that reads the token from its URL and a public API pair,
 // GET to check the link and POST to use it. The page HTML changes nothing by itself.
 const json = express.json({ limit: '4kb' });
-const linkPage = (file) => (req, res) => {
+const linkPage = (file: string) => (req: Request, res: Response) => {
   res.set('Cache-Control', 'no-store');
   res.set('Referrer-Policy', 'no-referrer');
   res.sendFile(path.join(publicDir, file));
@@ -149,14 +150,14 @@ app.delete('/api/invites/:id', auth.requireApi, auth.requireAdmin, auth.cancelIn
 app.post('/api/email', json, auth.requireApi, auth.requestEmailChange);
 app.delete('/api/tokens', auth.requireApi, auth.revokeAllTokens);
 
-// The extension connects through the site instead (see auth.js): /connect asks the signed-in user
+// The extension connects through the site instead (see auth.ts): /connect asks the signed-in user
 // to approve the browser and hands a single-use code back to the extension, which trades it here.
-const escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 app.get('/connect', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   res.set('Referrer-Policy', 'no-referrer');
   const p = parseConnectParams(req.query);
-  if (p.error) {
+  if (p.error !== undefined) {
     return res.status(400).type('html').send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="color-scheme" content="light dark">
 <title>Pinnery</title><link rel="stylesheet" href="/css/app.css"></head><body class="login-page"><div class="login">
 <h1 class="brand"><img src="/icon.svg" alt="" width="32" height="32">Pinnery</h1>
@@ -171,12 +172,12 @@ app.delete('/api/tokens/:id', auth.requireApi, auth.revokeToken);
 
 const routes = createRoutes(db, store, { dataDir: DATA_DIR, mailer, publicUrl: PUBLIC_URL });
 app.use('/api', auth.requireApi, routes.api);
-// Settings → Users (admins): list, promote/demote, delete, hand over a reset link. See users.js.
+// Settings → Users (admins): list, promote/demote, delete, hand over a reset link. See users.ts.
 // After the API, whose /api/users/directory (the share picker) is for everyone.
 app.use('/api/users', json, auth.requireApi, auth.requireAdmin, createUserRoutes(db, { auth, deletePinRows: routes.deletePinRows }));
 app.use(['/i', '/t'], auth.requireApi);
 app.use(createImageRoutes(db, store));
-// The extension's board picker: a page authenticated by its pending token alone (see routes.js).
+// The extension's board picker: a page authenticated by its pending token alone (see routes.ts).
 app.use('/pick', routes.pick);
 
 // The Chrome extension, zipped on demand from the folder shipped in the image (see settings).
@@ -199,8 +200,15 @@ app.use((req, res) => {
   res.status(404).type('text').send('not found');
 });
 
+// What an error reaching the handler below may carry: ImageError's status, body-parser's type.
+interface HttpError extends Error {
+  status?: number;
+  statusCode?: number;
+  type?: string;
+}
+
 // eslint-disable-next-line no-unused-vars
-app.use((err, req, res, next) => {
+app.use((err: HttpError, req: Request, res: Response, next: NextFunction) => {
   // ImageError carries a status and a message safe to show (including 502 for a failed upstream
   // fetch). Body-parser errors have a type. Anything else is a bug: log it, say nothing specific.
   let status = err.status || err.statusCode || 500;
@@ -224,7 +232,7 @@ const server = app.listen(PORT, '0.0.0.0', (err) => {
 
 // `docker stop` sends SIGTERM, and node as PID 1 ignores it unless handled, so Docker would wait,
 // then SIGKILL mid-write. Stop taking requests, let in-flight ones finish, close the database.
-function shutdown(signal) {
+function shutdown(signal: string) {
   console.log(`${signal}: shutting down`);
   setTimeout(() => process.exit(0), 5000).unref(); // don't wait forever on a slow request
   server.close(() => {

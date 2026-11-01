@@ -1,9 +1,21 @@
 import nodemailer from 'nodemailer';
+import { errorMessage } from './errors.ts';
 
 // Outgoing email over SMTP, configured by PINNERY_SMTP_*. Optional: with no host, `enabled` is
 // false and callers show links to copy instead. Messages are short plain text with a simple HTML
 // alternative. Nothing here logs recipients' links or tokens — just subject and address.
-export function createMailer(env = process.env) {
+export interface MailMessage {
+  to: string;
+  subject: string;
+  text: string;
+  html: string;
+}
+export interface Mailer {
+  enabled: boolean;
+  send(msg: MailMessage): Promise<void>;
+}
+
+export function createMailer(env: NodeJS.ProcessEnv = process.env): Mailer {
   const host = env.PINNERY_SMTP_HOST;
   const from = env.PINNERY_SMTP_FROM;
   if (!host || !from) {
@@ -23,23 +35,31 @@ export function createMailer(env = process.env) {
   });
   console.log(`mail: sending via ${host}:${port} as ${from}`);
 
-  async function send({ to, subject, text, html }) {
+  async function send({ to, subject, text, html }: MailMessage) {
     try {
       await transport.sendMail({ from, to, subject, text, html });
       console.log(`mail: sent "${subject}" to ${to}`);
     } catch (err) {
-      console.error(`mail: failed to send "${subject}" to ${to}: ${err.message}`);
-      throw new Error(`couldn't send the email: ${err.message}`);
+      console.error(`mail: failed to send "${subject}" to ${to}: ${errorMessage(err)}`);
+      throw new Error(`couldn't send the email: ${errorMessage(err)}`);
     }
   }
 
   return { enabled: true, send };
 }
 
-const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const escapeHtml = (s: unknown) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 // A short message: a few lines of text, optionally a link with its own label, and a closing line.
-export function message({ subject, lines, link, linkText, closing }) {
+export interface MessageContent {
+  subject: string;
+  lines: string[];
+  link?: string;
+  linkText?: string;
+  closing?: string;
+}
+
+export function message({ subject, lines, link, linkText, closing }: MessageContent): Omit<MailMessage, 'to'> {
   const text = [...lines, link && `${linkText}: ${link}`, closing].filter(Boolean).join('\n\n');
   const html = `<!doctype html><html><body style="font: 15px/1.5 system-ui, sans-serif; color: #1b1b1f">`
     + lines.map((l) => `<p>${escapeHtml(l)}</p>`).join('')

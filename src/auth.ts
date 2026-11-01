@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
-import { getSetting, setSetting } from './db.js';
-import { message } from './mail.js';
+import type { NextFunction, Request, Response } from 'express';
+import { getSetting, setSetting } from './db.ts';
+import { errorMessage } from './errors.ts';
+import type { Db, UserRow } from './db.ts';
+import { message } from './mail.ts';
+import type { MailMessage, Mailer } from './mail.ts';
 
 const COOKIE = 'pinnery_session';
 const SESSION_DAYS = 30;
@@ -9,8 +13,8 @@ const LOGIN_MAX_ATTEMPTS = 10;
 const MIN_PASSWORD = 8;
 const CODE_TTL_MS = 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
-// Emailed links (see email_tokens in db.js): how long each kind lives.
-const TTL_MS = { invite: 24 * HOUR_MS, reset: HOUR_MS, email_change: 24 * HOUR_MS };
+// Emailed links (see email_tokens in db.ts): how long each kind lives.
+const TTL_MS: Record<LinkKind, number> = { invite: 24 * HOUR_MS, reset: HOUR_MS, email_change: 24 * HOUR_MS };
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -22,17 +26,17 @@ const CHALLENGE_RE = /^[A-Za-z0-9_-]{43}$/;       // base64url(SHA-256), unpadde
 const VERIFIER_RE = /^[A-Za-z0-9._~-]{43,128}$/;  // RFC 7636 unreserved characters
 const STATE_RE = /^[A-Za-z0-9._~-]{1,256}$/;
 
-const sha256 = (s) => crypto.createHash('sha256').update(s).digest();
-const hex = (buf) => Buffer.from(buf).toString('hex');
-const b64url = (buf) => Buffer.from(buf).toString('base64url');
+const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest();
+const hex = (buf: Uint8Array) => Buffer.from(buf).toString('hex');
+const b64url = (buf: Uint8Array) => Buffer.from(buf).toString('base64url');
 
 // Constant-time string compare. Hashing first makes the lengths equal, so no length leak either.
-function safeEqual(a, b) {
+function safeEqual(a: string, b: string) {
   return crypto.timingSafeEqual(sha256(a), sha256(b));
 }
 
-function parseCookies(header) {
-  const out = {};
+function parseCookies(header: string | undefined) {
+  const out: Record<string, string> = {};
   for (const part of (header || '').split(';')) {
     const i = part.indexOf('=');
     if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
@@ -45,10 +49,10 @@ function parseCookies(header) {
 // "/\t/evil.com", which browsers read as //evil.com. Returns the normalised path, refusing one that
 // starts with // (from "/..//evil.com"): that would be read as another host when used again.
 // Unparseable values (e.g. "//[") are refused too. Mirrored in public/js/next.js.
-export function safeNext(v) {
+export function safeNext(v: unknown): string | null {
   if (typeof v !== 'string' || !v.startsWith('/') || v.length > 2048) return null;
   const base = 'http://pinnery.invalid';
-  let u;
+  let u: URL;
   try { u = new URL(v, base); } catch { return null; }
   if (u.origin !== base) return null;
   const path = u.pathname + u.search + u.hash;
@@ -57,9 +61,13 @@ export function safeNext(v) {
 
 // Validate the connect request parameters (query on GET /connect, JSON body on the decision POST).
 // Returns { redirectUri, challenge, state, name } or { error }.
-export function parseConnectParams(src) {
-  const str = (k) => (typeof src?.[k] === 'string' ? src[k] : '');
-  let redirectUri;
+export type ConnectParams =
+  | { error: string }
+  | { error?: undefined; redirectUri: string; challenge: string; state: string; name: string };
+
+export function parseConnectParams(src: Record<string, unknown> | null | undefined): ConnectParams {
+  const str = (k: string) => { const v = src?.[k]; return typeof v === 'string' ? v : ''; };
+  let redirectUri: string;
   try {
     const u = new URL(str('redirect_uri'));
     const ok = u.protocol === 'https:' && REDIRECT_HOST_RE.test(u.hostname) && REDIRECT_PATH_RE.test(u.pathname)
@@ -80,40 +88,90 @@ export function parseConnectParams(src) {
 
 // The base of links we hand out: PINNERY_PUBLIC_URL when set, else our own origin as the browser
 // sees it (X-Forwarded-Proto counts from a proxy, see PINNERY_PROXIES). No trailing slash.
-export function linkBase(req, publicUrl = '') {
+export function linkBase(req: Request, publicUrl = ''): string {
   let base = publicUrl || `${req.protocol}://${req.get('host')}`;
   while (base.endsWith('/')) base = base.slice(0, -1); // not a regex: the Host header is untrusted
   return base;
 }
 
-// mailer: see mail.js (may be disabled). publicUrl: PINNERY_PUBLIC_URL, the base of emailed links;
+// mailer: see mail.ts (may be disabled). publicUrl: PINNERY_PUBLIC_URL, the base of emailed links;
 // without it the request's own origin is used.
-export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' }) {
+export type LinkKind = 'invite' | 'reset' | 'email_change';
+
+// The user as the API shows them: flags as booleans, no password hash.
+export interface PublicUser {
+  id: number;
+  email: string;
+  display_name: string;
+  is_admin: boolean;
+  must_change_password: boolean;
+}
+
+// The caller's browser session or API token, as requireApi/requirePage resolve it.
+export interface Session {
+  id: number;
+  kind: 'session' | 'token';
+  token: string;
+  user: PublicUser;
+}
+
+type AuthUserRow = Pick<UserRow, 'id' | 'email' | 'display_name' | 'password_hash' | 'is_admin' | 'must_change_password'>;
+interface LinkRow {
+  id: number;
+  kind: LinkKind;
+  email: string;
+  user_id: number;
+  expires_at: string;
+}
+interface TokenRow {
+  id: number;
+  name: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+interface ConnectCode {
+  challenge: string;
+  redirectUri: string;
+  name: string;
+  userId: number;
+  expires: number;
+}
+
+export interface AuthOptions {
+  password?: string;
+  adminEmail?: string;
+  mailer: Mailer;
+  publicUrl?: string;
+}
+
+export type Auth = ReturnType<typeof createAuth>;
+
+export function createAuth(db: Db, { password, adminEmail, mailer, publicUrl = '' }: AuthOptions) {
   if (!password || !adminEmail) throw new Error('PINNERY_ADMIN_EMAIL and PINNERY_PASSWORD are required');
 
   // Salted scrypt, stored as salt:hash. Users carry their own; the `password_hash` setting
   // remembers PINNERY_PASSWORD so a changed value can be noticed on restart (see below).
-  const hashPassword = (pw) => {
+  const hashPassword = (pw: string) => {
     const salt = hex(crypto.randomBytes(16));
     return `${salt}:${hex(crypto.scryptSync(pw, salt, 32))}`;
   };
-  const verifyHash = (pw, stored) => {
+  const verifyHash = (pw: string, stored: string | null) => {
     const [salt, digest] = stored ? stored.split(':') : [];
     return !!(salt && digest) && safeEqual(hex(crypto.scryptSync(pw, salt, 32)), digest);
   };
-  const normaliseEmail = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
-  const validEmail = (e) => e.length <= 254 && EMAIL_RE.test(e); // length first: bounds the regex's work
+  const normaliseEmail = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+  const validEmail = (e: string) => e.length <= 254 && EMAIL_RE.test(e); // length first: bounds the regex's work
 
   const USER_COLS = 'id, email, display_name, password_hash, is_admin, must_change_password';
-  const getUser = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`);
-  const getUserByEmail = db.prepare(`SELECT ${USER_COLS} FROM users WHERE email = ?`);
-  const publicUser = (u) => ({ id: u.id, email: u.email, display_name: u.display_name, is_admin: !!u.is_admin, must_change_password: !!u.must_change_password });
+  const getUser = db.prepare<[number], AuthUserRow>(`SELECT ${USER_COLS} FROM users WHERE id = ?`);
+  const getUserByEmail = db.prepare<[string], AuthUserRow>(`SELECT ${USER_COLS} FROM users WHERE email = ?`);
+  const publicUser = (u: Pick<UserRow, 'id' | 'email' | 'display_name' | 'is_admin' | 'must_change_password'>): PublicUser => ({ id: u.id, email: u.email, display_name: u.display_name, is_admin: !!u.is_admin, must_change_password: !!u.must_change_password });
 
   // ---- the seeded admin -----------------------------------------------------------------------
   // PINNERY_ADMIN_EMAIL + PINNERY_PASSWORD create the first user on first start, remembered by id
   // in `seed_admin_id` so a later email change doesn't matter. The env password is only a
   // bootstrap/recovery secret: the admin has to choose their own before doing anything else.
-  // A database from before accounts (db.js has backed it up and added the owner columns) hands its
+  // A database from before accounts (db.ts has backed it up and added the owner columns) hands its
   // boards, sessions and tokens to that user, who keeps the sign-in password of the day
   // (`login_hash`); the change is only forced if that was still PINNERY_PASSWORD.
   const seedAdmin = db.transaction(() => {
@@ -156,10 +214,10 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   );
   // API tokens (the extension's credential) share the table: kind = 'token', named, never expire.
   const insertToken = db.prepare("INSERT INTO sessions (token_hash, user_id, kind, name) VALUES (?, ?, 'token', ?)");
-  const tokenRow = db.prepare('SELECT id, name, created_at, last_used_at FROM sessions WHERE id = ?');
-  const listTokenRows = db.prepare("SELECT id, name, created_at, last_used_at FROM sessions WHERE kind = 'token' AND user_id = ? ORDER BY id");
+  const tokenRow = db.prepare<[number | bigint], TokenRow>('SELECT id, name, created_at, last_used_at FROM sessions WHERE id = ?');
+  const listTokenRows = db.prepare<[number], TokenRow>("SELECT id, name, created_at, last_used_at FROM sessions WHERE kind = 'token' AND user_id = ? ORDER BY id");
   const deleteTokenById = db.prepare("DELETE FROM sessions WHERE id = ? AND kind = 'token' AND user_id = ?");
-  const findToken = db.prepare(`
+  const findToken = db.prepare<[string], { id: number; kind: 'session' | 'token'; user_id: number } & Omit<AuthUserRow, 'id' | 'password_hash'>>(`
     SELECT s.id, s.kind, u.id AS user_id, u.email, u.display_name, u.is_admin, u.must_change_password
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND (s.expires_at IS NULL OR s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`);
@@ -171,15 +229,15 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // exchanges and emailed-link guesses count separately, so a misbehaving extension can't lock
   // the owner out of the web app. Login lockout is per IP, never per account.
   function failureCounter(max = LOGIN_MAX_ATTEMPTS, windowMs = LOGIN_WINDOW_MS) {
-    const attempts = new Map();
+    const attempts = new Map<string | undefined, number[]>();
     return {
-      throttled(key) {
+      throttled(key: string | undefined) {
         const now = Date.now();
         const list = (attempts.get(key) || []).filter((t) => now - t < windowMs);
         if (list.length) attempts.set(key, list); else attempts.delete(key);
         return list.length >= max;
       },
-      record(key) {
+      record(key: string | undefined) {
         attempts.get(key)?.push(Date.now()) ?? attempts.set(key, [Date.now()]);
       },
     };
@@ -194,7 +252,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
 
   // Secure when the request came over HTTPS (directly or via the trusted reverse proxy's
   // X-Forwarded-Proto), so plain-http setups can still sign in.
-  function cookieHeader(res, token, maxAge) {
+  function cookieHeader(res: Response, token: string, maxAge: number) {
     const parts = [`${COOKIE}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAge}`];
     if (res.req.secure) parts.push('Secure');
     return parts.join('; ');
@@ -206,7 +264,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // Check the submitted email + password, counting failures per IP (not per account, so nobody can
   // lock another user out). Returns the user row, or null after sending the error — the same one
   // for an unknown email and a wrong password.
-  function authenticate(req, res) {
+  function authenticate(req: Request, res: Response): AuthUserRow | null {
     const ip = req.ip;
     if (throttled(ip)) { res.status(429).json({ error: 'too many attempts, try again later' }); return null; }
     const body = req.body || {};
@@ -220,13 +278,13 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     return user;
   }
 
-  const changeRequired = (res) => res.status(403).json({ error: 'choose a new password first', code: 'password_change_required' });
+  const changeRequired = (res: Response) => res.status(403).json({ error: 'choose a new password first', code: 'password_change_required' });
 
   // Resolve the caller's session from a bearer token or the cookie. Returns { id, kind, token, user }
   // or null.
-  function identify(req) {
+  function identify(req: Request): Session | null {
     const auth = req.headers.authorization;
-    let token = null;
+    let token: string | null = null;
     if (auth && auth.startsWith('Bearer ')) token = auth.slice(7).trim();
     else token = parseCookies(req.headers.cookie)[COOKIE] || null;
     if (!token) return null;
@@ -237,7 +295,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // A new browser session for the user, set as the cookie.
-  function startSession(res, userId) {
+  function startSession(res: Response, userId: number | bigint) {
     purgeExpired.run();
     const token = hex(crypto.randomBytes(32));
     const expires = new Date(Date.now() + SESSION_DAYS * 86400 * 1000).toISOString();
@@ -246,7 +304,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // POST /api/login — body { email, password }.
-  function login(req, res) {
+  function login(req: Request, res: Response) {
     const user = authenticate(req, res);
     if (!user) return;
     startSession(res, user.id);
@@ -255,7 +313,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
 
   // Set a user's password: clears a required change and cancels any outstanding reset links.
   // Browser sessions other than `keepSessionId` are signed out; API tokens stay.
-  const setPassword = db.transaction((userId, next, keepSessionId) => {
+  const setPassword = db.transaction((userId: number, next: string, keepSessionId: number | null) => {
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hashPassword(next), userId);
     db.prepare("DELETE FROM email_tokens WHERE kind = 'reset' AND user_id = ?").run(userId);
     db.prepare("DELETE FROM sessions WHERE kind = 'session' AND user_id = ? AND id IS NOT ?").run(userId, keepSessionId ?? null);
@@ -264,12 +322,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // POST /api/password — body { current, new }, from a signed-in browser (not an API token). Clears
   // a required change. The user's other browser sessions are signed out; this one and their API
   // tokens stay. Wrong current password is 403, not 401: a 401 would read as "signed out".
-  function changePassword(req, res) {
+  function changePassword(req: Request, res: Response) {
     const session = identify(req);
     if (!session || session.kind !== 'session') return res.status(401).json({ error: 'sign in to change the password' });
     const ip = req.ip;
     if (throttled(ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
-    const user = getUser.get(session.user.id);
+    const user = getUser.get(session.user.id)!; // the session's user exists: sessions cascade with it
     const current = typeof req.body?.current === 'string' ? req.body.current : '';
     if (!verifyHash(current, user.password_hash)) {
       recordFailure(ip);
@@ -286,17 +344,17 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // Each is a random token in a URL; only its hash is stored (email_tokens), with a kind, the email
   // it concerns, the user it belongs to and an expiry. Checking one consumes it when it's used.
 
-  const baseUrl = (req) => linkBase(req, publicUrl);
-  const insertLink = db.prepare('INSERT INTO email_tokens (token_hash, kind, email, user_id, expires_at) VALUES (?, ?, ?, ?, ?)');
-  const findLink = db.prepare('SELECT id, kind, email, user_id, expires_at FROM email_tokens WHERE token_hash = ? AND kind = ?');
-  const deleteLink = db.prepare('DELETE FROM email_tokens WHERE id = ?');
-  const deleteUserLinks = db.prepare('DELETE FROM email_tokens WHERE kind = ? AND user_id = ?');
+  const baseUrl = (req: Request) => linkBase(req, publicUrl);
+  const insertLink = db.prepare<[string, LinkKind, string, number, string]>('INSERT INTO email_tokens (token_hash, kind, email, user_id, expires_at) VALUES (?, ?, ?, ?, ?)');
+  const findLink = db.prepare<[string, LinkKind], LinkRow>('SELECT id, kind, email, user_id, expires_at FROM email_tokens WHERE token_hash = ? AND kind = ?');
+  const deleteLink = db.prepare<[number | bigint]>('DELETE FROM email_tokens WHERE id = ?');
+  const deleteUserLinks = db.prepare<[LinkKind, number]>('DELETE FROM email_tokens WHERE kind = ? AND user_id = ?');
   // Rows a week past their expiry go; until then an expired link can still be told from a used one.
   const purgeLinks = db.prepare("DELETE FROM email_tokens WHERE expires_at < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-7 days')");
   const live = "expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now')";
 
   // Make a link of the given kind. Returns { id, token, expires_at }; the caller builds the URL.
-  function issueLink(kind, email, userId) {
+  function issueLink(kind: LinkKind, email: string, userId: number) {
     purgeLinks.run();
     const token = hex(crypto.randomBytes(32));
     const expires = new Date(Date.now() + TTL_MS[kind]).toISOString();
@@ -306,11 +364,11 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
 
   // Look a presented token up. Returns the row, or null after answering: 404 for unknown/used,
   // 410 for expired. Guesses count against the client's IP.
-  function lookupLink(req, res, kind, what) {
+  function lookupLink(req: Request, res: Response, kind: LinkKind, what: string): LinkRow | null {
     const ip = req.ip;
     if (linkFailures.throttled(ip)) { res.status(429).json({ error: 'too many attempts, try again later' }); return null; }
     const token = req.params.token;
-    const row = TOKEN_RE.test(token) ? findLink.get(hex(sha256(token)), kind) : null;
+    const row = typeof token === 'string' && TOKEN_RE.test(token) ? findLink.get(hex(sha256(token)), kind) : null;
     if (!row) {
       linkFailures.record(ip);
       res.status(404).json({ error: `This ${what} link isn't valid any more — it may have been used or cancelled.` });
@@ -324,9 +382,9 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // Send in the background and log the outcome; for emails nobody is waiting on.
-  const sendQuietly = (to, msg) => mailer.enabled && mailer.send({ to, ...msg }).catch(() => {});
+  const sendQuietly = (to: string, msg: Omit<MailMessage, 'to'>) => mailer.enabled && mailer.send({ to, ...msg }).catch(() => {});
 
-  function notifyPasswordChanged(user, base) {
+  function notifyPasswordChanged(user: Pick<UserRow, 'email' | 'display_name'>, base: string) {
     sendQuietly(user.email, message({
       subject: 'Your Pinnery password was changed',
       lines: [`Hi ${user.display_name},`, 'Your Pinnery password was changed just now. Your other browsers have been signed out.'],
@@ -337,13 +395,13 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // ---- invites (admins) ----
-  const requireAdmin = (req, res, next) => (req.user.is_admin ? next() : res.status(403).json({ error: 'admins only' }));
-  const pendingInvites = db.prepare(`SELECT id, email, created_at, expires_at FROM email_tokens WHERE kind = 'invite' AND ${live} ORDER BY id`);
-  const pendingInviteFor = db.prepare(`SELECT id FROM email_tokens WHERE kind = 'invite' AND email = ? AND ${live}`);
+  const requireAdmin = (req: Request, res: Response, next: NextFunction) => (req.user.is_admin ? next() : res.status(403).json({ error: 'admins only' }));
+  const pendingInvites = db.prepare<[], { id: number; email: string; created_at: string; expires_at: string }>(`SELECT id, email, created_at, expires_at FROM email_tokens WHERE kind = 'invite' AND ${live} ORDER BY id`);
+  const pendingInviteFor = db.prepare<[string], { id: number }>(`SELECT id FROM email_tokens WHERE kind = 'invite' AND email = ? AND ${live}`);
 
   // POST /api/invites — body { email }. Emails the signup link when mail is on; the link is in the
   // reply either way (shown once — only its hash is kept), with `sent` and any send error.
-  async function createInvite(req, res) {
+  async function createInvite(req: Request, res: Response) {
     const email = normaliseEmail(req.body?.email);
     if (!validEmail(email)) return res.status(400).json({ error: 'enter an email address' });
     if (getUserByEmail.get(email)) return res.status(409).json({ error: 'That email already has an account.', code: 'has_account' });
@@ -351,7 +409,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     if (pending) return res.status(409).json({ error: 'That email already has a pending invite.', code: 'pending_invite', invite_id: pending.id });
     const { id, token, expires_at } = issueLink('invite', email, req.user.id);
     const link = `${baseUrl(req)}/signup/${token}`;
-    let sent = false, error;
+    let sent = false, error: string | undefined;
     if (mailer.enabled) {
       try {
         await mailer.send({ to: email, ...message({
@@ -362,17 +420,17 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
         }) });
         sent = true;
       } catch (err) {
-        error = err.message;
+        error = errorMessage(err);
       }
     }
     res.status(201).json({ id, email, expires_at, link, sent, error });
   }
 
-  function listInvites(req, res) {
+  function listInvites(req: Request, res: Response) {
     res.json(pendingInvites.all());
   }
 
-  function cancelInvite(req, res) {
+  function cancelInvite(req: Request, res: Response) {
     const id = Number(req.params.id);
     const { changes } = Number.isInteger(id) && id > 0 ? db.prepare("DELETE FROM email_tokens WHERE id = ? AND kind = 'invite'").run(id) : { changes: 0 };
     if (!changes) return res.status(404).json({ error: 'invite not found' });
@@ -380,14 +438,14 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // GET /api/signup/:token — what the signup page needs: the locked email.
-  function inviteInfo(req, res) {
+  function inviteInfo(req: Request, res: Response) {
     const row = lookupLink(req, res, 'invite', 'invite');
     if (row) res.json({ email: row.email });
   }
 
   // POST /api/signup/:token — body { display_name, password }. Creates the (non-admin) user,
   // consumes the invite and signs them in.
-  function signup(req, res) {
+  function signup(req: Request, res: Response) {
     const row = lookupLink(req, res, 'invite', 'invite');
     if (!row) return;
     const name = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
@@ -408,7 +466,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // ---- forgotten password ----
   // Make a reset link for a user, cancelling their older ones. For the forgot flow here and for an
   // admin handing one over by hand. Returns { link, expires_at }.
-  function createResetLink(userId, base) {
+  function createResetLink(userId: number, base: string) {
     const user = getUser.get(userId);
     if (!user) throw new Error('no such user');
     deleteUserLinks.run('reset', userId);
@@ -416,27 +474,27 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     return { link: `${base}/reset/${token}`, expires_at };
   }
 
-  const resetMessage = (user, link) => message({
+  const resetMessage = (user: Pick<UserRow, 'display_name'>, link: string) => message({
     subject: 'Reset your Pinnery password',
     lines: [`Hi ${user.display_name},`, 'Someone asked to reset the password for this Pinnery account. The link works once and expires in an hour.'],
     link, linkText: 'Choose a new password',
     closing: 'If this wasn’t you, ignore this email — your password hasn’t changed.',
   });
 
-  // POST /api/users/:id/reset (admins, see users.js) — a reset link for that user, emailed when
+  // POST /api/users/:id/reset (admins, see users.ts) — a reset link for that user, emailed when
   // mail is on and returned either way, like an invite: { email, link, expires_at, sent, error }.
-  async function adminResetLink(req, res) {
+  async function adminResetLink(req: Request, res: Response) {
     const id = Number(req.params.id);
     const user = Number.isInteger(id) && id > 0 ? getUser.get(id) : null;
     if (!user) return res.status(404).json({ error: 'user not found' });
     const { link, expires_at } = createResetLink(user.id, baseUrl(req));
-    let sent = false, error;
+    let sent = false, error: string | undefined;
     if (mailer.enabled) {
       try {
         await mailer.send({ to: user.email, ...resetMessage(user, link) });
         sent = true;
       } catch (err) {
-        error = err.message;
+        error = errorMessage(err);
       }
     }
     res.status(201).json({ email: user.email, link, expires_at, sent, error });
@@ -450,12 +508,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
 
   // GET /api/mail — whether email is set up, and whether "forgot password" can email a link (the
   // forgot page and Settings adapt). Public.
-  const mailStatus = (req, res) => res.json({ enabled: mailer.enabled, reset: selfReset });
+  const mailStatus = (req: Request, res: Response) => res.json({ enabled: mailer.enabled, reset: selfReset });
 
   // POST /api/forgot — body { email }. The reply is the same whether or not the account exists, and
   // the email goes out in the background so the timing is too. Per-IP limit answers 429 before
   // any lookup; past the per-address limit the request is just dropped, with the same reply.
-  function forgot(req, res) {
+  function forgot(req: Request, res: Response) {
     const ip = req.ip;
     if (forgotByIp.throttled(ip)) return res.status(429).json({ error: 'too many requests, try again later' });
     const email = normaliseEmail(req.body?.email);
@@ -475,12 +533,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // GET /api/reset/:token — is the link still good? POST — body { password }: sets it, signs the
   // user's other browsers out, signs this one in, and says how many extension tokens they have so
   // the page can offer to revoke those too (DELETE /api/tokens, now that they're signed in).
-  function resetInfo(req, res) {
+  function resetInfo(req: Request, res: Response) {
     const row = lookupLink(req, res, 'reset', 'reset');
     if (row) res.json({ email: row.email });
   }
 
-  function reset(req, res) {
+  function reset(req: Request, res: Response) {
     const row = lookupLink(req, res, 'reset', 'reset');
     if (!row) return;
     const pw = typeof req.body?.password === 'string' ? req.body.password : '';
@@ -490,12 +548,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     setPassword(user.id, pw, null);
     startSession(res, user.id);
     notifyPasswordChanged(user, baseUrl(req));
-    const { n } = db.prepare("SELECT COUNT(*) AS n FROM sessions WHERE kind = 'token' AND user_id = ?").get(user.id);
+    const { n } = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE kind = 'token' AND user_id = ?").get(user.id)!;
     res.json({ ok: true, tokens: n });
   }
 
   // DELETE /api/tokens — revoke all of the caller's API tokens.
-  function revokeAllTokens(req, res) {
+  function revokeAllTokens(req: Request, res: Response) {
     const { changes } = db.prepare("DELETE FROM sessions WHERE kind = 'token' AND user_id = ?").run(req.user.id);
     res.json({ ok: true, revoked: changes });
   }
@@ -503,12 +561,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // ---- email change ----
   // POST /api/email — body { email, password }, signed in. Sends a confirmation to the new address;
   // nothing changes until it's used. Needs mail: a link to copy would go to the wrong person.
-  async function requestEmailChange(req, res) {
+  async function requestEmailChange(req: Request, res: Response) {
     if (!mailer.enabled) return res.status(409).json({ error: 'Email isn’t set up on this Pinnery, so the address can’t be changed here.' });
     if (req.session.kind !== 'session') return res.status(403).json({ error: 'sign in to change the email' });
     const ip = req.ip;
     if (throttled(ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
-    const user = getUser.get(req.user.id);
+    const user = getUser.get(req.user.id)!;
     const given = typeof req.body?.password === 'string' ? req.body.password : '';
     if (!verifyHash(given, user.password_hash)) {
       recordFailure(ip);
@@ -529,19 +587,19 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
       }) });
     } catch (err) {
       deleteLink.run(id);
-      return res.status(502).json({ error: `${err.message}. The address hasn’t changed.` });
+      return res.status(502).json({ error: `${errorMessage(err)}. The address hasn’t changed.` });
     }
     res.json({ ok: true, email });
   }
 
   // GET /api/confirm-email/:token — what the page shows. POST — makes the change (a GET can't,
   // since mail scanners open links).
-  function confirmEmailInfo(req, res) {
+  function confirmEmailInfo(req: Request, res: Response) {
     const row = lookupLink(req, res, 'email_change', 'confirmation');
     if (row) res.json({ email: row.email });
   }
 
-  function confirmEmail(req, res) {
+  function confirmEmail(req: Request, res: Response) {
     const row = lookupLink(req, res, 'email_change', 'confirmation');
     if (!row) return;
     const ok = db.transaction(() => {
@@ -555,18 +613,18 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // GET /api/me — who's signed in. PATCH /api/me — body { display_name }.
-  function me(req, res) {
+  function me(req: Request, res: Response) {
     res.json(req.user);
   }
 
-  function updateMe(req, res) {
+  function updateMe(req: Request, res: Response) {
     const name = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
     if (!name || name.length > 100) return res.status(400).json({ error: 'display name must be 1–100 characters' });
     db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, req.user.id);
     res.json({ ...req.user, display_name: name });
   }
 
-  function logout(req, res) {
+  function logout(req: Request, res: Response) {
     const session = identify(req);
     if (session) deleteToken.run(hex(sha256(session.token)));
     res.setHeader('Set-Cookie', cookieHeader(res, '', 0));
@@ -576,16 +634,16 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // Create a named API token. Prefixed so a leaked token is recognisable (secret scanners, logs);
   // older unprefixed tokens still work, since only the hash of whatever is presented is compared.
   // The plain token is returned exactly once — only its hash is kept.
-  function mintToken(userId, name) {
+  function mintToken(userId: number, name: string) {
     const token = `pn_${hex(crypto.randomBytes(32))}`;
     const { lastInsertRowid } = insertToken.run(hex(sha256(token)), userId, name);
-    const row = tokenRow.get(lastInsertRowid);
+    const row = tokenRow.get(lastInsertRowid)!;
     return { id: row.id, name: row.name, created_at: row.created_at, token };
   }
 
   // POST /api/tokens — body { email, password, name }. Exchanges the credentials for a named API
   // token (scripts and the API; the extension connects through the site instead, see below).
-  function createToken(req, res) {
+  function createToken(req: Request, res: Response) {
     const user = authenticate(req, res);
     if (!user) return;
     if (user.must_change_password) return changeRequired(res);
@@ -601,9 +659,9 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // and the page navigates to <redirect_uri>?code=&state= — Chrome hands that back to the extension,
   // which exchanges it at POST /api/connect/token with its code_verifier. Codes live in memory only.
 
-  const codes = new Map(); // code -> { challenge, redirectUri, name, userId, expires }
+  const codes = new Map<string, ConnectCode>();
 
-  function issueCode(params) {
+  function issueCode(params: Omit<ConnectCode, 'expires'>) {
     const now = Date.now();
     for (const [c, e] of codes) if (e.expires <= now) codes.delete(c);
     const code = hex(crypto.randomBytes(32));
@@ -611,11 +669,11 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     return code;
   }
 
-  const ownOrigin = (req) => linkBase(req);
+  const ownOrigin = (req: Request) => linkBase(req);
 
   // A state-changing request from our own pages only: the session cookie (SameSite=Lax already
   // keeps it off cross-site POSTs) plus the browser's own word on where the request came from.
-  function sameOrigin(req) {
+  function sameOrigin(req: Request) {
     const site = req.get('sec-fetch-site');
     if (site) return site === 'same-origin';
     const origin = req.get('origin');
@@ -623,13 +681,13 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   }
 
   // POST /connect/decide — body: the connect params plus { allow }. Responds with where to go next.
-  function connectDecide(req, res) {
+  function connectDecide(req: Request, res: Response) {
     const session = identify(req);
     if (!session) return res.status(401).json({ error: 'sign in first' });
     if (session.user.must_change_password) return changeRequired(res);
     if (!sameOrigin(req)) return res.status(403).json({ error: 'cross-site request refused' });
     const p = parseConnectParams(req.body);
-    if (p.error) return res.status(400).json({ error: p.error });
+    if (p.error !== undefined) return res.status(400).json({ error: p.error });
     const to = new URL(p.redirectUri);
     to.searchParams.set('state', p.state);
     if (req.body.allow === true) {
@@ -642,10 +700,10 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
 
   // POST /api/connect/token — body { code, code_verifier, redirect_uri }, no auth. The code is
   // consumed on first sight, right or wrong; failures have their own throttle, separate from login.
-  function exchangeCode(req, res) {
+  function exchangeCode(req: Request, res: Response) {
     const ip = req.ip;
     if (exchangeFailures.throttled(ip)) return res.status(429).json({ error: 'too many attempts, try again later' });
-    const str = (k) => (typeof req.body?.[k] === 'string' ? req.body[k] : '');
+    const str = (k: string): string => (typeof req.body?.[k] === 'string' ? req.body[k] : '');
     const code = str('code');
     const entry = /^[0-9a-f]{64}$/.test(code) ? codes.get(code) : null;
     codes.delete(code);
@@ -661,11 +719,11 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     res.status(201).json(mintToken(entry.userId, entry.name));
   }
 
-  function listTokens(req, res) {
+  function listTokens(req: Request, res: Response) {
     res.json(listTokenRows.all(req.user.id).map((r) => ({ ...r, current: r.id === req.session.id })));
   }
 
-  function revokeToken(req, res) {
+  function revokeToken(req: Request, res: Response) {
     const id = Number(req.params.id);
     const { changes } = Number.isInteger(id) && id > 0 ? deleteTokenById.run(id, req.user.id) : { changes: 0 };
     if (!changes) return res.status(404).json({ error: 'token not found' });
@@ -675,7 +733,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
   // Middleware. While a password change is required (first sign-in, env reset) the app is closed
   // off until it's done: pages go to the change page, the API answers 403 with a code the front
   // end recognises. Only /api/logout and /api/password (which identify for themselves) stay open.
-  function requireApi(req, res, next) {
+  function requireApi(req: Request, res: Response, next: NextFunction) {
     const session = identify(req);
     if (!session) return res.status(401).json({ error: 'unauthorised' });
     if (session.user.must_change_password) return changeRequired(res);
@@ -684,7 +742,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     next();
   }
 
-  function requirePage(req, res, next) {
+  function requirePage(req: Request, res: Response, next: NextFunction) {
     const session = identify(req);
     if (!session) return res.redirect(302, `/login?next=${encodeURIComponent(req.originalUrl)}`);
     if (session.user.must_change_password) return res.redirect(302, `/password?next=${encodeURIComponent(req.originalUrl)}`);
