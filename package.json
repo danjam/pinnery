@@ -1,6 +1,6 @@
 {
   "name": "pinnery",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Self-hosted single-user image boards",
   "license": "MIT",
   "private": true,
