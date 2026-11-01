@@ -35,12 +35,12 @@ describe('zip64', () => {
     assert.notEqual(zip.indexOf(SIG_END64), -1);
     const file = path.join(dir, 'many.zip');
     fs.writeFileSync(file, zip);
-    const z = openZipFile(file);
+    const z = await openZipFile(file);
     try {
       assert.equal(z.entries.length, 70_000);
-      assert.equal(z.read(z.entries[69_999]).toString(), '69999');
+      assert.equal((await z.read(z.entries[69_999])).toString(), '69999');
     } finally {
-      z.close();
+      await z.close();
     }
   });
 
@@ -53,15 +53,15 @@ describe('zip64', () => {
     const fd = fs.openSync(file, 'w');
     fs.writeSync(fd, zip, 0, zip.length, offset);
     fs.closeSync(fd);
-    const z = openZipFile(file);
+    const z = await openZipFile(file);
     try {
       assert.deepEqual(z.entries.map((e) => e.name), ['a.txt', 'b.txt']);
       assert.equal(z.entries[0].offset, offset);
       assert.ok(z.entries[1].offset > offset);
-      assert.deepEqual(z.read(z.entries[0]), data);
-      assert.equal(z.read(z.entries[1]).toString(), 'second');
+      assert.deepEqual(await z.read(z.entries[0]), data);
+      assert.equal((await z.read(z.entries[1])).toString(), 'second');
     } finally {
-      z.close();
+      await z.close();
     }
   });
 
@@ -111,20 +111,20 @@ describe('zip64', () => {
     return { data, zip: Buffer.concat([body, cd, locator, eocd]) };
   }
 
-  const open = (name: string, zip: Buffer) => {
+  const open = async (name: string, zip: Buffer) => {
     const file = path.join(dir, name);
     fs.writeFileSync(file, zip);
-    return openZipFile(file);
+    return await openZipFile(file);
   };
 
-  it('reads sizes from the zip64 extra field, as other zip tools write them', () => {
+  it('reads sizes from the zip64 extra field, as other zip tools write them', async () => {
     const { zip, data } = handZip();
-    const z = open('sizes.zip', zip);
+    const z = await open('sizes.zip', zip);
     try {
       assert.equal(z.entries[0].size, data.length);
-      assert.deepEqual(z.read(z.entries[0]), data);
+      assert.deepEqual(await z.read(z.entries[0]), data);
     } finally {
-      z.close();
+      await z.close();
     }
     // after another extra field, as Info-ZIP writes them (a 5-byte extended timestamp first)
     const ts = Buffer.from([0x55, 0x54, 0x05, 0x00, 0x01, 0, 0, 0, 0]);
@@ -133,25 +133,59 @@ describe('zip64', () => {
     field.writeUInt16LE(16, 2);
     field.writeBigUInt64LE(BigInt(data.length), 4);
     field.writeBigUInt64LE(BigInt(data.length), 12);
-    const z2 = open('sizes-after-ts.zip', handZip({ extra: Buffer.concat([ts, field]) }).zip);
+    const z2 = await open('sizes-after-ts.zip', handZip({ extra: Buffer.concat([ts, field]) }).zip);
     try {
-      assert.deepEqual(z2.read(z2.entries[0]), data);
+      assert.deepEqual(await z2.read(z2.entries[0]), data);
     } finally {
-      z2.close();
+      await z2.close();
     }
   });
 
-  it('refuses malformed zip64 records', () => {
+  it('refuses malformed zip64 records', async () => {
     // sizes marked as zip64 with no zip64 field to read them from
-    assert.throws(() => open('no-extra.zip', handZip({ extra: Buffer.alloc(0) }).zip), /x\.txt: missing zip64 sizes/);
+    await assert.rejects(open('no-extra.zip', handZip({ extra: Buffer.alloc(0) }).zip), /x\.txt: missing zip64 sizes/);
     // a size past what a Number holds exactly
     const huge = Buffer.alloc(20);
     huge.writeUInt16LE(0x0001, 0);
     huge.writeUInt16LE(16, 2);
     huge.writeBigUInt64LE(2n ** 60n, 4);
     huge.writeBigUInt64LE(11n, 12);
-    assert.throws(() => open('huge.zip', handZip({ extra: huge }).zip), /not a valid zip file/);
+    await assert.rejects(open('huge.zip', handZip({ extra: huge }).zip), /not a valid zip file/);
     // a locator pointing at something that isn't a zip64 end record
-    assert.throws(() => open('bad-end64.zip', handZip({ end64At: 0 }).zip), /not a valid zip file/);
+    await assert.rejects(open('bad-end64.zip', handZip({ end64At: 0 }).zip), /not a valid zip file/);
+  });
+});
+
+// Export and import run alongside other requests, so the zip work must not hold the event loop.
+// On a fully synchronous path the awaits settle as microtasks, before any setImmediate can run.
+describe('zip I/O yields to the event loop', () => {
+  let dir: string;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinnery-zip-async-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const data = Buffer.alloc(4 * 1024 * 1024, 'pinnery ');
+  const yielded = () => {
+    const state = { ticked: false };
+    setImmediate(() => { state.ticked = true; });
+    return state;
+  };
+
+  it('while deflating an entry', async () => {
+    const state = yielded();
+    await makeZip([['big.txt', data]]);
+    assert.ok(state.ticked);
+  });
+
+  it('while opening a zip and inflating an entry', async () => {
+    const file = path.join(dir, 'big.zip');
+    fs.writeFileSync(file, await makeZip([['big.txt', data]]));
+    const state = yielded();
+    const z = await openZipFile(file);
+    try {
+      assert.deepEqual(await z.read(z.entries[0]), data);
+      assert.ok(state.ticked);
+    } finally {
+      await z.close();
+    }
   });
 });

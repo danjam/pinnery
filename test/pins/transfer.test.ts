@@ -221,24 +221,24 @@ describe('zip reader limits', () => {
     // still inside the file, but over the 1000-byte cap while its declared size stays 10.
     const cd = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
     zip.writeUInt32LE(3000, cd + 20);
-    const z = openZipFile(write('compressed.zip', zip), { maxEntrySize: 1000 });
+    const z = await openZipFile(write('compressed.zip', zip), { maxEntrySize: 1000 });
     try {
       const entry = z.entries.find((e) => e.name === 'a.bin')!;
-      assert.throws(() => z.read(entry), /a\.bin: too large/);
+      await assert.rejects(z.read(entry), /a\.bin: too large/);
     } finally {
-      z.close();
+      await z.close();
     }
   });
 
   it('still reads an incompressible entry at the cap, though deflate made it slightly bigger', async () => {
     const data = crypto.randomBytes(1000);
-    const z = openZipFile(write('incompressible.zip', await makeZip([['r.bin', data]])), { maxEntrySize: 1000 });
+    const z = await openZipFile(write('incompressible.zip', await makeZip([['r.bin', data]])), { maxEntrySize: 1000 });
     try {
       const entry = z.entries[0];
       assert.ok(entry.compressedSize > 1000, `compressed ${entry.compressedSize}`);
-      assert.deepEqual(z.read(entry), data);
+      assert.deepEqual(await z.read(entry), data);
     } finally {
-      z.close();
+      await z.close();
     }
   });
 });

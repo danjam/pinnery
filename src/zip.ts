@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import zlib from 'node:zlib';
+
+// The async forms run on the libuv threadpool, so a big entry doesn't block other requests.
+const deflateRaw = promisify(zlib.deflateRaw);
+const inflateRaw = promisify(zlib.inflateRaw);
 
 // Minimal zip support (store/deflate, no encryption) — enough to hand out the extension folder and
 // to export/import boards without pulling in a dependency. Zip64 is written only when an archive
@@ -65,7 +70,7 @@ export function createZipWriter(sink: ZipSink, { offset = 0 }: { offset?: number
   async function add(entryName: string, data: Buffer, { compress = true }: { compress?: boolean } = {}) {
     const name = Buffer.from(entryName, 'utf8');
     const method = compress ? 8 : 0;
-    const body = compress ? zlib.deflateRawSync(data, { level: 9 }) : data;
+    const body = compress ? await deflateRaw(data, { level: 9 }) : data;
     const crc = zlib.crc32(data);
 
     // Entries are images and the manifest, far below 4 GiB, so only the offset can need zip64: it's
@@ -172,7 +177,7 @@ function zip64Extra(values: number[]) {
 export async function zipDirectory(dir: string, prefix: string, transform: (rel: string, buf: Buffer) => Buffer = (rel, buf) => buf): Promise<Buffer> {
   const chunks: Buffer[] = [];
   const zip = createZipWriter({ write: (b) => { chunks.push(b); return true; }, on() {}, off() {} });
-  for (const rel of walk(dir)) await zip.add(`${prefix}/${rel}`, transform(rel, fs.readFileSync(path.join(dir, rel))));
+  for (const rel of walk(dir)) await zip.add(`${prefix}/${rel}`, transform(rel, await fs.promises.readFile(path.join(dir, rel))));
   await zip.end();
   return Buffer.concat(chunks);
 }
@@ -188,7 +193,7 @@ export function isSafeZipPath(name: unknown): name is string {
   return name.split('/').every((seg) => seg !== '' && seg !== '.' && seg !== '..');
 }
 
-// Open a zip file on disk. Entries come from the central directory; `read(entry)` returns the
+// Open a zip file on disk. Entries come from the central directory; `read(entry)` resolves to the
 // inflated bytes (checked against the recorded CRC). Directory entries are left out. Throws
 // ZipError for anything malformed or unsupported (encryption, other compression methods).
 export interface ZipEntry {
@@ -200,7 +205,7 @@ export interface ZipEntry {
   offset: number;
 }
 
-export type ZipFile = ReturnType<typeof openZipFile>;
+export type ZipFile = Awaited<ReturnType<typeof openZipFile>>;
 
 // A 64-bit zip field as a Number, refusing values past what a Number holds exactly.
 function toSafe(v: bigint) {
@@ -224,25 +229,26 @@ function zip64Values(extra: Buffer): number[] {
   return [];
 }
 
-export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntrySize?: number } = {}) {
-  const fd = fs.openSync(file, 'r');
-  const size = fs.fstatSync(fd).size;
+export async function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntrySize?: number } = {}) {
+  const fh = await fs.promises.open(file, 'r');
+  let size = 0; // set from fh.stat() below, inside the try that closes fh on failure
 
-  function readAt(pos: number, len: number) {
+  async function readAt(pos: number, len: number) {
     if (pos < 0 || len < 0 || pos + len > size) throw new ZipError('not a valid zip file');
     const buf = Buffer.alloc(len);
     let done = 0;
     while (done < len) {
-      const n = fs.readSync(fd, buf, done, len - done, pos + done);
-      if (!n) throw new ZipError('not a valid zip file');
-      done += n;
+      const { bytesRead } = await fh.read(buf, done, len - done, pos + done);
+      if (!bytesRead) throw new ZipError('not a valid zip file');
+      done += bytesRead;
     }
     return buf;
   }
 
   try {
+    size = (await fh.stat()).size;
     // End-of-central-directory record: fixed 22 bytes plus an optional comment of up to 64 KiB.
-    const tail = readAt(Math.max(0, size - 22 - 65535), Math.min(size, 22 + 65535));
+    const tail = await readAt(Math.max(0, size - 22 - 65535), Math.min(size, 22 + 65535));
     let eocd = -1;
     for (let i = tail.length - 22; i >= 0; i--) {
       if (tail.readUInt32LE(i) === SIG_END && tail.readUInt16LE(i + 20) === tail.length - 22 - i) { eocd = i; break; }
@@ -254,15 +260,15 @@ export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntr
     // Zip64: a locator right before the classic end record points at the zip64 end record, whose
     // values replace the classic ones.
     const locatorPos = size - tail.length + eocd - 20;
-    if (locatorPos >= 0 && readAt(locatorPos, 4).readUInt32LE(0) === SIG_END64_LOCATOR) {
-      const end64 = readAt(toSafe(readAt(locatorPos + 8, 8).readBigUInt64LE(0)), 56);
+    if (locatorPos >= 0 && (await readAt(locatorPos, 4)).readUInt32LE(0) === SIG_END64_LOCATOR) {
+      const end64 = await readAt(toSafe((await readAt(locatorPos + 8, 8)).readBigUInt64LE(0)), 56);
       if (end64.readUInt32LE(0) !== SIG_END64) throw new ZipError('not a valid zip file');
       count = toSafe(end64.readBigUInt64LE(32));
       cdSize = toSafe(end64.readBigUInt64LE(40));
       cdOffset = toSafe(end64.readBigUInt64LE(48));
     }
 
-    const cd = readAt(cdOffset, cdSize);
+    const cd = await readAt(cdOffset, cdSize);
     const entries: ZipEntry[] = [];
     let p = 0;
     for (let i = 0; i < count; i++) {
@@ -298,18 +304,18 @@ export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntr
       entries.push({ name, method, crc, compressedSize, size: uncompressedSize, offset });
     }
 
-    function read(entry: ZipEntry): Buffer {
+    async function read(entry: ZipEntry): Promise<Buffer> {
       // Deflate can grow incompressible data slightly, so the compressed cap allows a margin.
       if (entry.size > maxEntrySize || entry.compressedSize > maxEntrySize + Math.ceil(maxEntrySize / 1024) + 64) {
         throw new ZipError(`${entry.name}: too large`);
       }
-      const local = readAt(entry.offset, 30);
+      const local = await readAt(entry.offset, 30);
       if (local.readUInt32LE(0) !== SIG_LOCAL) throw new ZipError('not a valid zip file');
       const dataStart = entry.offset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
-      const raw = readAt(dataStart, entry.compressedSize);
+      const raw = await readAt(dataStart, entry.compressedSize);
       let data: Buffer;
       try {
-        data = entry.method === 8 ? zlib.inflateRawSync(raw, { maxOutputLength: Math.max(1, entry.size) }) : raw;
+        data = entry.method === 8 ? await inflateRaw(raw, { maxOutputLength: Math.max(1, entry.size) }) : raw;
       } catch {
         throw new ZipError(`${entry.name}: corrupt entry`);
       }
@@ -317,9 +323,9 @@ export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntr
       return data;
     }
 
-    return { entries, read, close: () => fs.closeSync(fd) };
+    return { entries, read, close: () => fh.close() };
   } catch (e) {
-    fs.closeSync(fd);
+    await fh.close();
     throw e;
   }
 }
