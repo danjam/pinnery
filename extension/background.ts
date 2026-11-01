@@ -10,12 +10,6 @@ import { createPick } from './lib/pin.ts';
 import type { Job } from './lib/pin.ts';
 import type { ResolveMessage, ResolveReply, ToastMessage, WorkerMessage } from './lib/messages.ts';
 
-declare global {
-  interface Window {
-    handleClick?: typeof handleClick;
-  }
-}
-
 type IdTab = chrome.tabs.Tab & { id: number };
 const hasId = (tab: chrome.tabs.Tab | undefined): tab is IdTab => tab?.id !== undefined;
 
@@ -179,4 +173,4 @@ chrome.runtime.onMessage.addListener((msg: WorkerMessage | null | undefined, sen
 });
 
 // Exposed so the flow can be driven without a real right-click (tests).
-self.handleClick = handleClick;
+Object.assign(self, { handleClick });
