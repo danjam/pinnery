@@ -149,7 +149,19 @@ function makeClient(base, { cookie = null, token = null, email = null, password 
  * - stop(): kill the server, wait for it to exit, delete the data dir and close the sink.
  *   Idempotent.
  */
-export async function startServer({ env = {}, mail = false } = {}) {
+export async function startServer(opts = {}) {
+  // freePort() releases the port before the server binds it, so a test file running in parallel
+  // can rarely grab it first. Then our server exits with EADDRINUSE: try again on a new port.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await startOnce(opts);
+    } catch (err) {
+      if (!err.portInUse || attempt === 5) throw err;
+    }
+  }
+}
+
+async function startOnce({ env = {}, mail = false }) {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
   const port = await freePort();
   const sink = mail ? await startMailSink() : undefined;
@@ -198,15 +210,19 @@ export async function startServer({ env = {}, mail = false } = {}) {
     await fs.rm(dataDir, { recursive: true, force: true });
   }
 
-  // Wait for /healthz, failing loudly (with the server's own output) if it never comes up.
+  // Wait until our own server says it's listening, then for /healthz, failing loudly (with the
+  // server's own output) if it never comes up. Waiting for the log line matters: if another test
+  // file's server took the port first, /healthz alone would answer from that one.
   const deadline = Date.now() + 20000;
   for (;;) {
     if (exited) {
       await stop();
-      throw new Error(`server exited during startup\n--- server output ---\n${out}`);
+      const err = new Error(`server exited during startup\n--- server output ---\n${out}`);
+      err.portInUse = out.includes('EADDRINUSE');
+      throw err;
     }
     try {
-      if ((await fetch(`${url}/healthz`)).ok) break;
+      if (out.includes(`listening on :${port}`) && (await fetch(`${url}/healthz`)).ok) break;
     } catch { /* not listening yet */ }
     if (Date.now() > deadline) {
       await stop();

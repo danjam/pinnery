@@ -8,7 +8,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "node --test test/*.test.js"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
     "node": ">=24"
