@@ -35,6 +35,9 @@ WORKDIR /app
 # App code stays root-owned so the app (uid 1000) can't modify it; only /data is writable.
 COPY --from=build /app /app
 COPY --from=build --chown=1000:1000 /data /data
+# Licence notices travel with the image. The GPL-3 and LGPL-3 texts that libvips (via sharp) needs
+# are already in the base image, in /usr/share/common-licenses.
+COPY LICENSE NOTICE ./
 
 # uid 1000, as before, so existing data folders keep working. (The image's default user is root.)
 USER 1000:1000
