@@ -23,10 +23,11 @@ function source(file: string): string {
 // The scripts an HTML page loads: <script type="module"> ones as modules, plain ones (boot.js, which
 // must block first paint) as classic scripts. `base` is what root-relative src="/…" paths resolve to.
 function pageScripts(html: string, dir: string, base: string): { src: string, module: boolean }[] {
-  return [...fs.readFileSync(html, 'utf8').matchAll(/<script\b([^>]*)\bsrc="([^"]+)"/g)].map(([, attrs, src]) => ({
-    src: src.startsWith('/') ? path.join(base, src) : path.join(dir, src),
-    module: /\btype="module"/.test(attrs),
-  }));
+  return [...fs.readFileSync(html, 'utf8').matchAll(/<script\b([^>]*)>/g)].flatMap(([, attrs]) => {
+    const src = /\bsrc="([^"]+)"/.exec(attrs)?.[1];
+    if (!src) return [];
+    return [{ src: src.startsWith('/') ? path.join(base, src) : path.join(dir, src), module: /\btype="module"/.test(attrs) }];
+  });
 }
 
 // Copy a source directory into dist, leaving out scripts (they're bundled), the directories that
