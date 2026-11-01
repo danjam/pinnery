@@ -54,7 +54,7 @@ export function el<K extends keyof HTMLElementTagNameMap>(
 
 // Toast with a countdown bar along its bottom edge. Hovering pauses both the bar and the dismiss
 // timer; `action` makes it clickable (click runs it and dismisses). The extension's in-page toast
-// (extension/content.js) mirrors this markup, styling and behaviour.
+// (extension/content.ts) mirrors this markup, styling and behaviour.
 export function toast(
   message: string,
   { error = false, ms = 3000, action = null }: { error?: boolean; ms?: number; action?: (() => void) | null } = {},
