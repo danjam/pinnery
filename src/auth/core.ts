@@ -16,19 +16,31 @@ interface TokenRow {
 
 // Events per key (a client IP, or an email) within a sliding window. Logins, connect-code
 // exchanges and emailed-link guesses count separately, so a misbehaving extension can't lock
-// the owner out of the web app. Login lockout is per IP, never per account.
-function failureCounter(max = LOGIN_MAX_ATTEMPTS, windowMs = LOGIN_WINDOW_MS) {
+// the owner out of the web app. Login lockout is per IP, never per account. Keys whose newest
+// event has left the window are swept at most once a window, so one-off clients don't stay in
+// memory for the life of the process.
+export function failureCounter(max = LOGIN_MAX_ATTEMPTS, windowMs = LOGIN_WINDOW_MS) {
   const attempts = new Map<string | undefined, number[]>();
+  let lastSweep = Date.now();
+  function sweep(now: number) {
+    if (now - lastSweep < windowMs) return;
+    lastSweep = now;
+    for (const [key, list] of attempts) if (now - list[list.length - 1] >= windowMs) attempts.delete(key);
+  }
   return {
     throttled(key: string | undefined) {
       const now = Date.now();
+      sweep(now);
       const list = (attempts.get(key) || []).filter((t) => now - t < windowMs);
       if (list.length) attempts.set(key, list); else attempts.delete(key);
       return list.length >= max;
     },
     record(key: string | undefined) {
-      attempts.get(key)?.push(Date.now()) ?? attempts.set(key, [Date.now()]);
+      const now = Date.now();
+      sweep(now);
+      attempts.get(key)?.push(now) ?? attempts.set(key, [now]);
     },
+    get size() { return attempts.size; },
   };
 }
 
