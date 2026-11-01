@@ -1,0 +1,21 @@
+name: Test
+# Runs the API test suite (test/*.test.js) against a real server and a temporary database on every
+# push to master and every PR, so a red run shows before a release.
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
