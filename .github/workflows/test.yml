@@ -23,7 +23,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate --jq '.[].filename' > files.txt
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR/files" --paginate \
+            --jq '.[] | .filename, (.previous_filename // empty)' > files.txt # a rename's old path counts too
           docs=false
           if [ -s files.txt ] && ! grep -qvE '(\.md$|^docs/|^LICENSE$|^NOTICE$)' files.txt; then docs=true; fi
           echo "docs-only=$docs" >> "$GITHUB_OUTPUT"
