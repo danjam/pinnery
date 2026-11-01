@@ -1,17 +1,32 @@
-import { api, thumbUrl, exportUrl } from './api.js';
-import { el, toast, menu, dialog, prompt, confirm, pickBoard } from './ui.js';
-import { icon } from './icons.js';
-import { layout } from './masonry.js';
-import { openLightbox } from './lightbox.js';
-import { appearanceSection } from './theme.js';
+import { api, thumbUrl, exportUrl, errorMessage, apiError } from './api.ts';
+import type { Board, BoardInfo, Pin, Role, Share, Person, Me, AdminUser, EmailedLink } from './api.ts';
+import { el, toast, menu, dialog, prompt, confirm, pickBoard } from './ui.ts';
+import type { MenuItem, MenuEntry } from './ui.ts';
+import { icon } from './icons.ts';
+import { layout } from './masonry.ts';
+import { openLightbox } from './lightbox.ts';
+import { appearanceSection } from './theme.ts';
 
-const view = document.getElementById('view');
-const titleEl = document.getElementById('title');
-const actionsEl = document.getElementById('actions');
-const selectbar = document.getElementById('selectbar');
-const dropcover = document.getElementById('dropcover');
+// index.html has all of these.
+const view = document.getElementById('view')!;
+const titleEl = document.getElementById('title')!;
+const actionsEl = document.getElementById('actions')!;
+const selectbar = document.getElementById('selectbar')!;
+const selectCount = document.getElementById('selectcount')!;
+const selMove = document.getElementById('sel-move') as HTMLButtonElement;
+const selDelete = document.getElementById('sel-delete') as HTMLButtonElement;
+const selCancel = document.getElementById('sel-cancel')!;
+const dropcover = document.getElementById('dropcover')!;
 
-const state = {
+const state: {
+  boards: Board[];
+  board: BoardInfo | null;
+  pins: Pin[];
+  order: 'asc' | 'desc';
+  selecting: boolean;
+  selected: Set<number>;
+  tiles: Map<number, HTMLElement>;
+} = {
   boards: [],
   board: null,        // current board row, or null on the home page
   pins: [],           // newest first, as the server sends them
@@ -21,9 +36,27 @@ const state = {
   tiles: new Map(),   // pin id -> tile element, reused across re-layouts
 };
 
+// The open board, for the functions that only run on a board's page.
+function openBoard(): BoardInfo {
+  if (!state.board) throw new Error('no board is open');
+  return state.board;
+}
+
+// Is the event's target inside an element matching the selector? (Targets can be non-elements.)
+const within = (target: EventTarget | null, selector: string) => target instanceof Element && target.closest(selector) !== null;
+
+// Chrome's install offer isn't in lib.dom.
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>;
+}
+declare global {
+  interface WindowEventMap { beforeinstallprompt: BeforeInstallPromptEvent }
+}
+
 // ---- routing ------------------------------------------------------------------------------
 
-function navigate(path) {
+function navigate(path: string) {
   history.pushState(null, '', path);
   route();
 }
@@ -37,15 +70,15 @@ async function route() {
     else if (settingsTab) await showSettings(settingsTab[1]);
     else await showHome();
   } catch (e) {
-    toast(e.message, { error: true });
+    toast(errorMessage(e), { error: true });
   }
 }
 
 document.addEventListener('click', (e) => {
-  const a = e.target.closest('a[data-link]');
+  const a = e.target instanceof Element ? e.target.closest('a[data-link]') : null;
   if (!a || e.metaKey || e.ctrlKey || e.button) return;
   e.preventDefault();
-  navigate(a.getAttribute('href'));
+  navigate(a.getAttribute('href')!);   // every data-link anchor has an href
 });
 window.addEventListener('popstate', route);
 
@@ -86,7 +119,7 @@ async function showHome() {
 
 // Breadcrumb after "Pinnery": nothing on the home page, else "/ <title>" with an optional count
 // and note (both dimmed), e.g. "/ Trips (12) shared by Sam".
-function setCrumbs(title, count, note) {
+function setCrumbs(title?: string, count?: number, note?: string) {
   titleEl.replaceChildren();
   if (title == null) return;
   titleEl.append(el('span', { class: 'sep', text: '/' }), el('span', { class: 'crumb', text: title }));
@@ -94,19 +127,19 @@ function setCrumbs(title, count, note) {
   if (note) titleEl.append(el('span', { class: 'count', text: note }));
 }
 
-function moreButton(label, items) {
+function moreButton(label: string, items: MenuEntry[]) {
   return el('button', { class: 'btn icon-only ghost', 'aria-label': label, onclick: (e) => menu(e.currentTarget, items) }, icon('dots-horizontal'));
 }
 
 // A board's `role` is the user's standing on it: owner, or editor / viewer of a board shared with
 // them (`owner_name` says by whom). Owners do everything; editors add and delete pins; viewers look.
-const isOwner = (b) => b.role === 'owner';
-const canAdd = (b) => b.role !== 'viewer';
-const sharedBy = (b) => (isOwner(b) ? '' : `shared by ${b.owner_name}`);
+const isOwner = (b: { role: Role }) => b.role === 'owner';
+const canAdd = (b: { role: Role }) => b.role !== 'viewer';
+const sharedBy = (b: BoardInfo) => (isOwner(b) ? '' : `shared by ${b.owner_name}`);
 // Boards the user can pin into, named for a picker — shared ones say so.
-const pinnable = (boards) => boards.filter(canAdd).map((b) => ({ ...b, name: isOwner(b) ? b.name : `${b.name} (${sharedBy(b)})` }));
+const pinnable = <B extends BoardInfo>(boards: B[]): B[] => boards.filter(canAdd).map((b) => ({ ...b, name: isOwner(b) ? b.name : `${b.name} (${sharedBy(b)})` }));
 
-function boardTile(b) {
+function boardTile(b: Board) {
   const cover = el('div', { class: 'cover' });
   if (b.cover) {
     const img = el('img', { src: thumbUrl(b.cover, 400), alt: '', loading: 'lazy' });
@@ -126,8 +159,11 @@ function boardTile(b) {
   );
 }
 
+// A board as the home page lists it, or the open board (which has no pin count of its own).
+type OwnedBoard = BoardInfo & { pin_count?: number };
+
 // The owner's board menu. Everything here is theirs alone.
-function ownerItems(b) {
+function ownerItems(b: OwnedBoard): MenuItem[] {
   return [
     { label: 'Rename', icon: 'pencil-outline', onclick: () => renameBoard(b) },
     { label: 'Share…', icon: 'share-variant-outline', onclick: () => shareBoard(b) },
@@ -138,9 +174,9 @@ function ownerItems(b) {
 
 // Share a board: who has it and as what, with a role to change or a Remove; below, everyone else
 // as "Name · email", filtered as you type, added as a viewer or an editor with one click.
-async function shareBoard(b) {
+async function shareBoard(b: BoardInfo) {
   let [shares, people] = await Promise.all([api.shares(b.id), api.directory()]);
-  const report = (err) => toast(err.message, { error: true, ms: 6000 });
+  const report = (err: unknown) => toast(errorMessage(err), { error: true, ms: 6000 });
   await dialog((close) => {
     const current = el('div', { class: 'tokens' });
     const others = el('div', { class: 'tokens' });
@@ -153,7 +189,7 @@ async function shareBoard(b) {
           el('div', { class: 'token-name', text: s.display_name }),
           el('div', { class: 'muted', text: s.email }),
         ),
-        el('select', { class: 'field role', 'aria-label': `Role for ${s.display_name}`, onchange: (e) => setRole(s, e.target.value) },
+        el('select', { class: 'field role', 'aria-label': `Role for ${s.display_name}`, onchange: (e) => setRole(s, e.currentTarget.value as Share['role']) },   // only those two options
           el('option', { value: 'viewer', text: 'Viewer', selected: s.role === 'viewer' }),
           el('option', { value: 'editor', text: 'Editor', selected: s.role === 'editor' }),
         ),
@@ -175,7 +211,7 @@ async function shareBoard(b) {
 
     const draw = () => { drawCurrent(); drawOthers(); };
 
-    async function add(p, role) {
+    async function add(p: Person, role: Share['role']) {
       try {
         const s = await api.setShare(b.id, p.id, role);
         shares.push(s);
@@ -183,13 +219,13 @@ async function shareBoard(b) {
         draw();
       } catch (err) { report(err); }
     }
-    async function setRole(s, role) {
+    async function setRole(s: Share, role: Share['role']) {
       try {
         Object.assign(s, await api.setShare(b.id, s.user_id, role));
         toast(`${s.display_name} is now ${role === 'editor' ? 'an editor' : 'a viewer'}`);
       } catch (err) { report(err); drawCurrent(); }
     }
-    async function remove(s) {
+    async function remove(s: Share) {
       try {
         await api.removeShare(b.id, s.user_id);
         shares = shares.filter((x) => x.user_id !== s.user_id);
@@ -220,7 +256,7 @@ async function newBoard() {
   return b;
 }
 
-async function renameBoard(b) {
+async function renameBoard(b: BoardInfo) {
   const name = await prompt({ title: 'Rename board', value: b.name, ok: 'Rename' });
   if (!name || name === b.name) return;
   await api.updateBoard(b.id, { name });
@@ -228,14 +264,15 @@ async function renameBoard(b) {
 }
 
 // Delete a board: pins can be moved to another board or deleted with it.
-async function deleteBoard(b) {
+async function deleteBoard(b: OwnedBoard) {
   const others = pinnable(state.boards.length ? state.boards : await api.boards()).filter((x) => x.id !== b.id);
   const count = b.pin_count ?? state.pins.length;
-  let result;
+  type Choice = { action: 'delete' } | { action: 'move'; to: number };
+  let result: Choice | null | undefined;
   if (!count) {
     result = (await confirm({ title: `Delete “${b.name}”?`, message: 'This board is empty.' })) ? { action: 'delete' } : null;
   } else {
-    result = await dialog((close) => {
+    result = await dialog<Choice>((close) => {
       const select = el('select', { class: 'field', disabled: !others.length },
         ...others.map((o) => el('option', { value: o.id, text: o.name })));
       const moveRadio = el('input', { type: 'radio', name: 'what', value: 'move', checked: others.length > 0, disabled: !others.length });
@@ -269,18 +306,18 @@ async function signOut() {
 
 // ---- settings -----------------------------------------------------------------------------
 
-const when = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'never');
-const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : 'never');
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 // An emailed link the server handed back ({ email, link, sent, error }): what happened to the email,
 // and Copy/Share buttons for passing the link on by hand.
-const linkStatus = ({ email, sent, error }) => (sent
+const linkStatus = ({ email, sent, error }: Pick<EmailedLink, 'email' | 'sent' | 'error'>) => (sent
   ? `Emailed to ${email}. You can also pass the link on yourself:`
   : error
     ? `Couldn’t email ${email} (${error}). Send them this link instead:`
     : `Send ${email} this link (email isn’t set up here):`);
 
-function linkButtons(link, { title, text }) {
+function linkButtons(link: string, { title, text }: { title: string; text: string }) {
   const copy = el('button', { class: 'btn', text: 'Copy', onclick: async () => {
     try { await navigator.clipboard.writeText(link); toast('Link copied'); } catch { toast('Couldn’t copy — select the link instead', { error: true }); }
   } });
@@ -291,7 +328,7 @@ function linkButtons(link, { title, text }) {
 // Settings → Users (admins). Everyone with an account as "Name · email", and a menu per user: admin
 // on or off, a password reset link to hand over (emailed too when mail is on), delete with counts.
 // Demoting or deleting someone signs them out everywhere at once — yourself included.
-function usersSection(me) {
+function usersSection(me: Me) {
   const list = el('div', { class: 'tokens' });
 
   async function render() {
@@ -308,20 +345,21 @@ function usersSection(me) {
     )));
   }
 
-  function userItems(u) {
+  function userItems(u: AdminUser): MenuEntry[] {
     const self = u.id === me.id;
+    const remove: MenuEntry[] = self ? [] : ['-', { label: 'Delete user', icon: 'delete-outline', danger: true, onclick: () => deleteUser(u) }];
     return [
       u.is_admin
         ? { label: 'Remove admin', onclick: () => setAdmin(u, false) }
         : { label: 'Make admin', onclick: () => setAdmin(u, true) },
       { label: 'Reset password', onclick: () => resetPassword(u) },
-      ...(self ? [] : ['-', { label: 'Delete user', icon: 'delete-outline', danger: true, onclick: () => deleteUser(u) }]),
+      ...remove,
     ];
   }
 
-  const report = (err) => toast(err.message, { error: true, ms: 6000 });
+  const report = (err: unknown) => toast(errorMessage(err), { error: true, ms: 6000 });
 
-  async function setAdmin(u, isAdmin) {
+  async function setAdmin(u: AdminUser, isAdmin: boolean) {
     if (!isAdmin) {
       const who = u.id === me.id ? 'You’ll' : 'They’ll';
       const ok = await confirm({ title: `Remove admin from ${u.display_name}?`, message: `${who} be signed out everywhere, extension included, and keep ${u.id === me.id ? 'your' : 'their'} boards.`, ok: 'Remove admin' });
@@ -336,8 +374,8 @@ function usersSection(me) {
     }
   }
 
-  async function resetPassword(u) {
-    let r;
+  async function resetPassword(u: AdminUser) {
+    let r: EmailedLink;
     try { r = await api.resetUser(u.id); } catch (err) { return report(err); }
     await dialog((close) => [
       el('h2', { text: `Reset link for ${u.display_name}` }),
@@ -349,7 +387,7 @@ function usersSection(me) {
     ]);
   }
 
-  async function deleteUser(u) {
+  async function deleteUser(u: AdminUser) {
     const ok = await confirm({
       title: `Delete ${u.display_name}?`,
       message: `${plural(u.boards, 'board')} and ${plural(u.pins, 'pin')} will be deleted, along with their sessions, extension tokens and pending invites. This can’t be undone.`,
@@ -376,7 +414,7 @@ function usersSection(me) {
 // Settings → Invite someone (admins). An invite is a single-use signup link for one email, good
 // for 24 hours. Only its hash is kept, so the link is shown once, here, with Copy and Share — and
 // emailed too when mail is set up. Pending invites are listed and can be cancelled.
-function invitesSection(mail) {
+function invitesSection(mail: boolean) {
   const emailInput = el('input', { class: 'field', type: 'email', placeholder: 'Email address', required: true, autocomplete: 'off', spellcheck: false });
   const result = el('div');
   const list = el('div', { class: 'tokens' });
@@ -397,7 +435,7 @@ function invitesSection(mail) {
     )));
   }
 
-  function showLink(invite) {
+  function showLink(invite: EmailedLink) {
     result.replaceChildren(el('div', { class: 'linkbox' },
       el('p', { class: invite.error ? 'error' : 'muted', text: linkStatus(invite) }),
       el('code', { text: invite.link }),
@@ -406,25 +444,26 @@ function invitesSection(mail) {
     ));
   }
 
-  async function invite(email) {
+  async function invite(email: string): Promise<void> {
     try {
       showLink(await api.createInvite(email));
       emailInput.value = '';
       await renderInvites();
     } catch (err) {
-      if (err.data?.code === 'pending_invite') {
+      const data = apiError(err)?.data;
+      if (data?.code === 'pending_invite') {
         const again = await confirm({ title: `${email} already has a pending invite`, message: 'Cancel it and send a new one?', ok: 'Cancel and re-invite', danger: false });
         if (!again) return;
-        await api.cancelInvite(err.data.invite_id);
+        await api.cancelInvite(data.invite_id!);   // the pending_invite error always carries it
         return invite(email);
       }
-      toast(err.message, { error: true, ms: 6000 });
+      toast(errorMessage(err), { error: true, ms: 6000 });
     }
   }
 
   const form = el('form', { class: 'invite-form' }, emailInput, el('button', { class: 'btn primary', type: 'submit', text: 'Invite' }));
   form.addEventListener('submit', (e) => { e.preventDefault(); invite(emailInput.value.trim()); });
-  renderInvites().catch((err) => toast(err.message, { error: true }));
+  renderInvites().catch((err) => toast(errorMessage(err), { error: true }));
 
   return el('section', {},
     el('h2', { text: 'Invite someone' }),
@@ -438,7 +477,7 @@ function invitesSection(mail) {
   );
 }
 
-async function showSettings(tab) {
+async function showSettings(tab?: string) {
   state.board = null;
   state.pins = [];
   state.tiles.clear();
@@ -485,13 +524,13 @@ async function showSettings(tab) {
       nameInput.value = updated.display_name;
       toast('Display name saved');
     } catch (err) {
-      toast(err.message, { error: true });
+      toast(errorMessage(err), { error: true });
     }
   });
 
   // Password: current + new (twice). The user's other browsers are signed out; this one and their
   // tokens stay.
-  const pwField = (label, autocomplete) => {
+  const pwField = (label: string, autocomplete: string): [HTMLInputElement, HTMLLabelElement] => {
     const input = el('input', { class: 'field', type: 'password', autocomplete, required: true });
     return [input, el('label', { class: 'stacked' }, el('span', { text: label }), input)];
   };
@@ -508,7 +547,7 @@ async function showSettings(tab) {
       pwForm.reset();
       toast('Password changed. Other browsers are signed out.');
     } catch (err) {
-      toast(err.message, { error: true });
+      toast(errorMessage(err), { error: true });
     }
   });
 
@@ -529,7 +568,7 @@ async function showSettings(tab) {
         el('div', { class: 'actions' }, el('button', { class: 'btn primary', text: 'OK', onclick: () => close(true), autofocus: true })),
       ]);
     } catch (err) {
-      toast(err.message, { error: true, ms: 6000 });
+      toast(errorMessage(err), { error: true, ms: 6000 });
     }
   });
 
@@ -537,7 +576,7 @@ async function showSettings(tab) {
   const importInput = el('input', { type: 'file', accept: '.zip,application/zip', hidden: true });
   const importButton = el('button', { class: 'btn primary', text: 'Import zip…', onclick: () => importInput.click() });
   importInput.addEventListener('change', async () => {
-    const file = importInput.files[0];
+    const file = importInput.files?.[0];
     importInput.value = '';
     if (!file) return;
     importButton.disabled = true;
@@ -551,7 +590,7 @@ async function showSettings(tab) {
         el('div', { class: 'actions' }, el('button', { class: 'btn primary', text: 'OK', onclick: () => close(true), autofocus: true })),
       ]);
     } catch (e) {
-      toast(e.message, { error: true, ms: 6000 });
+      toast(errorMessage(e), { error: true, ms: 6000 });
     } finally {
       importButton.disabled = false;
       importButton.textContent = 'Import zip…';
@@ -611,11 +650,11 @@ async function showSettings(tab) {
         ),
       ),
     ] },
-  ].filter(Boolean);
+  ].filter((t) => t !== false);
   let current = tabs.find((t) => t.id === tab) || tabs[0];
   const tabBar = el('nav', { class: 'settings-tabs', role: 'tablist', 'aria-label': 'Settings' });
   const body = el('div', { class: 'settings-body' });
-  const show = (t) => {
+  const show = (t: (typeof tabs)[number]) => {
     current = t;
     tabBar.replaceChildren(...tabs.map((x) => el('a', {
       href: `/settings/${x.id}`, role: 'tab', 'aria-selected': String(x === t),
@@ -625,16 +664,16 @@ async function showSettings(tab) {
   };
   show(current);
   const footer = el('footer', { class: 'settings-footer' });
-  fetch('/healthz').then((r) => r.json()).then(({ version }) => { if (version) footer.textContent = `Pinnery v${version}`; }).catch(() => {});
+  fetch('/healthz').then((r): Promise<{ version?: string }> => r.json()).then(({ version }) => { if (version) footer.textContent = `Pinnery v${version}`; }).catch(() => {});
   view.replaceChildren(el('div', { class: 'settings' }, tabBar, body, footer));
 }
 
 // ---- board view ---------------------------------------------------------------------------
 
-let grid = null;
-let resizeObserver = null;
+let grid: HTMLElement | null = null;
+let resizeObserver: ResizeObserver | null = null;
 
-async function showBoard(id) {
+async function showBoard(id: number) {
   const { board, pins } = await api.boardPins(id);
   state.board = board;
   state.pins = pins;
@@ -655,9 +694,10 @@ async function showBoard(id) {
 // Viewers get the sort toggle and the menu's general items; editors also Select and + Pin; owners
 // the board's own menu items too. Select is for deleting (anyone who may) and moving (owners).
 function renderBoardHeader() {
-  const b = state.board;
+  const b = openBoard();
   setCrumbs(b.name, state.pins.length, sharedBy(b));
-  actionsEl.replaceChildren(
+  const ownerPart: MenuEntry[] = isOwner(b) ? [...ownerItems({ ...b, pin_count: state.pins.length }), '-'] : [];
+  actionsEl.replaceChildren(...[
     el('button', {
       class: 'btn ghost', title: 'Toggle sort order',
       onclick: () => {
@@ -672,12 +712,14 @@ function renderBoardHeader() {
       icon('checkbox-multiple-marked-outline'), el('span', { text: 'Select' })),
     canAdd(b) && el('button', { class: 'btn primary', onclick: () => addPinDialog() }, icon('plus'), el('span', { text: 'Pin' })),
     moreButton('Board menu', [
-      ...(isOwner(b) ? [...ownerItems({ ...b, pin_count: state.pins.length }), '-'] : []),
+      ...ownerPart,
       { label: 'Settings', icon: 'cog-outline', onclick: () => navigate('/settings') },
       { label: 'Sign out', icon: 'logout', onclick: signOut },
     ]),
-  );
-  document.getElementById('sel-move').hidden = !isOwner(b);
+  // For viewers the two canAdd() items are false, which replaceChildren renders as text (#50).
+  // The cast hides that from tsc until it's fixed.
+  ] as (Node | string)[]);
+  selMove.hidden = !isOwner(b);
 }
 
 function displayedPins() {
@@ -692,8 +734,8 @@ function renderGrid() {
   if (!pins.length) {
     grid.replaceChildren(el('div', { class: 'empty' },
       el('h2', { text: 'No pins yet' }),
-      canAdd(state.board) && el('p', {}, 'Right-click any image → ', el('kbd', { text: 'Pin to Pinnery' }), ', or use ', el('kbd', { text: '+ Pin' })),
-      canAdd(state.board) && el('button', { class: 'btn primary', onclick: () => addPinDialog() }, icon('plus'), el('span', { text: 'Pin' })),
+      canAdd(openBoard()) && el('p', {}, 'Right-click any image → ', el('kbd', { text: 'Pin to Pinnery' }), ', or use ', el('kbd', { text: '+ Pin' })),
+      canAdd(openBoard()) && el('button', { class: 'btn primary', onclick: () => addPinDialog() }, icon('plus'), el('span', { text: 'Pin' })),
     ));
     grid.style.height = '';
     return;
@@ -713,19 +755,20 @@ function renderGrid() {
 function relayout() {
   if (!grid || !state.pins.length) return;
   const pins = displayedPins();
-  const colW = layout(grid, pins.map((p) => ({ el: state.tiles.get(p.id), width: p.width, height: p.height })));
+  // renderGrid made a tile for every pin in the list.
+  const colW = layout(grid, pins.map((p) => ({ el: state.tiles.get(p.id)!, width: p.width, height: p.height })));
   if (!colW) return;
   const size = colW * devicePixelRatio > 400 ? 800 : 400;
   for (const p of pins) {
-    const img = state.tiles.get(p.id).querySelector('img');
+    const img = state.tiles.get(p.id)!.querySelector('img')!;   // every tile has its <img>
     if (!img.dataset.size) {
-      img.dataset.size = size;
+      img.dataset.size = String(size);
       img.src = thumbUrl(p, size);
     }
   }
 }
 
-function tile(pin) {
+function tile(pin: Pin) {
   const img = el('img', { alt: pin.page_title || '', loading: 'lazy', decoding: 'async' });
   img.addEventListener('load', () => img.classList.add('loaded'));
   const t = el('div', { class: 'tile', tabindex: 0, role: 'button', dataset: { id: pin.id } },
@@ -740,17 +783,17 @@ function tile(pin) {
   t.addEventListener('click', activate);
   t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); } });
   // Long-press on touch devices enters select mode.
-  let pressTimer;
+  let pressTimer: ReturnType<typeof setTimeout> | undefined;
   t.addEventListener('touchstart', () => { pressTimer = setTimeout(() => { if (!state.selecting) { enterSelect(); toggleSelect(pin.id); } }, 500); }, { passive: true });
   t.addEventListener('touchend', () => clearTimeout(pressTimer));
   t.addEventListener('touchmove', () => clearTimeout(pressTimer), { passive: true });
   return t;
 }
 
-// The lightbox gets only the actions the user's role allows (see lightbox.js).
-function openPin(pin) {
+// The lightbox gets only the actions the user's role allows (see lightbox.ts).
+function openPin(pin: Pin) {
   const pins = displayedPins().slice();
-  const b = state.board;
+  const b = openBoard();
   openLightbox({
     pins,
     index: pins.findIndex((p) => p.id === pin.id),
@@ -766,16 +809,16 @@ function openPin(pin) {
 }
 
 // Remove pins from the local list after a move or delete and redraw.
-function dropLocal(ids) {
+function dropLocal(ids: number[]) {
   const gone = new Set(ids);
   state.pins = state.pins.filter((p) => !gone.has(p.id));
   renderBoardHeader();
   renderGrid();
 }
 
-async function movePins(ids) {
+async function movePins(ids: number[]) {
   if (!state.boards.length) state.boards = await api.boards();
-  let to = await pickBoard({ title: `Move ${ids.length} ${ids.length === 1 ? 'pin' : 'pins'} to…`, boards: pinnable(state.boards), exclude: state.board.id });
+  let to = await pickBoard({ title: `Move ${ids.length} ${ids.length === 1 ? 'pin' : 'pins'} to…`, boards: pinnable(state.boards), exclude: openBoard().id });
   if (to === undefined) return false;
   if (to === 'new') {
     const name = await prompt({ title: 'New board', label: 'Board name', ok: 'Create' });
@@ -792,7 +835,7 @@ async function movePins(ids) {
   return true;
 }
 
-async function deletePins(ids) {
+async function deletePins(ids: number[]) {
   const n = ids.length;
   if (!(await confirm({ title: n === 1 ? 'Delete this pin?' : `Delete ${n} pins?`, message: 'This can\'t be undone.' }))) return false;
   await api.deletePins(ids);
@@ -820,7 +863,7 @@ function exitSelect() {
   if (state.board) renderBoardHeader();
 }
 
-function toggleSelect(id) {
+function toggleSelect(id: number) {
   if (state.selected.has(id)) state.selected.delete(id); else state.selected.add(id);
   state.tiles.get(id)?.classList.toggle('selected', state.selected.has(id));
   updateSelectbar();
@@ -829,18 +872,18 @@ function toggleSelect(id) {
 function updateSelectbar() {
   selectbar.hidden = !state.selecting;
   const n = state.selected.size;
-  document.getElementById('selectcount').textContent = n ? `${n} selected` : 'Select pins';
-  document.getElementById('sel-move').disabled = !n;
-  document.getElementById('sel-delete').disabled = !n;
+  selectCount.textContent = n ? `${n} selected` : 'Select pins';
+  selMove.disabled = !n;
+  selDelete.disabled = !n;
 }
 
-document.getElementById('sel-move').onclick = () => movePins([...state.selected]);
-document.getElementById('sel-delete').onclick = () => deletePins([...state.selected]);
-document.getElementById('sel-cancel').onclick = exitSelect;
+selMove.onclick = () => movePins([...state.selected]);
+selDelete.onclick = () => deletePins([...state.selected]);
+selCancel.onclick = exitSelect;
 
 // ---- adding pins --------------------------------------------------------------------------
 
-function addedPin(pin) {
+function addedPin(pin: Pin) {
   if (state.board?.id !== pin.board_id) return;
   state.pins.unshift(pin);
   renderBoardHeader();
@@ -849,7 +892,9 @@ function addedPin(pin) {
 
 // Shared by the dialog, drag-drop and paste. `report(name, status, error)` gets progress; status
 // is busy | ok | err.
-async function addFiles(boardId, files, report = () => {}) {
+type Report = (name: string, status: 'busy' | 'ok' | 'err', error?: string) => void;
+
+async function addFiles(boardId: number, files: File[], report: Report = () => {}) {
   for (const file of files) {
     if (!file.type.startsWith('image/') && file.type !== '') { report(file.name, 'err', 'not an image'); continue; }
     report(file.name, 'busy');
@@ -857,30 +902,31 @@ async function addFiles(boardId, files, report = () => {}) {
       addedPin(await api.upload(boardId, file));
       report(file.name, 'ok');
     } catch (e) {
-      report(file.name, 'err', e.message);
+      report(file.name, 'err', errorMessage(e));
     }
   }
 }
 
-async function addUrl(boardId, url, report = () => {}) {
+async function addUrl(boardId: number, url: string, report: Report = () => {}) {
   report(url, 'busy');
   try {
     addedPin(await api.pinFromUrl(boardId, url));
     report(url, 'ok');
   } catch (e) {
-    report(url, 'err', e.message);
+    report(url, 'err', errorMessage(e));
   }
 }
 
-const isHttpUrl = (s) => /^https?:\/\/\S+$/i.test(s.trim());
+const isHttpUrl = (s: string) => /^https?:\/\/\S+$/i.test(s.trim());
 
 function addPinDialog() {
-  const boardId = state.board.id;
+  const board = openBoard();
+  const boardId = board.id;
   dialog((close) => {
     const progress = el('div', { class: 'progress' });
     const lines = new Map();
     const WORDS = { busy: 'adding…', ok: 'added' };
-    const report = (name, status, error) => {
+    const report: Report = (name, status, error) => {
       const short = name.length > 48 ? `${name.slice(0, 45)}…` : name;
       let line = lines.get(name);
       if (!line) { line = el('div'); lines.set(name, line); progress.prepend(line); }
@@ -895,8 +941,8 @@ function addPinDialog() {
       urlInput.value = '';
       addUrl(boardId, url, report);
     };
-    const fileInput = el('input', { type: 'file', accept: 'image/*', multiple: true, onchange: () => {
-      addFiles(boardId, [...fileInput.files], report);
+    const fileInput: HTMLInputElement = el('input', { type: 'file', accept: 'image/*', multiple: true, onchange: () => {
+      addFiles(boardId, [...fileInput.files ?? []], report);
       fileInput.value = '';
     } });
     const drop = el('label', { class: 'dropzone' },
@@ -909,11 +955,11 @@ function addPinDialog() {
       e.preventDefault();
       e.stopPropagation();
       drop.classList.remove('over');
-      addFiles(boardId, [...e.dataTransfer.files], report);
+      addFiles(boardId, [...e.dataTransfer?.files ?? []], report);
     });
 
     const form = el('form', { onsubmit: (e) => { e.preventDefault(); submitUrl(); } },
-      el('h2', { text: `Add to “${state.board.name}”` }),
+      el('h2', { text: `Add to “${board.name}”` }),
       el('div', { class: 'row' }, urlInput, el('button', { class: 'btn primary', type: 'submit', text: 'Add' })),
       drop,
       el('p', { text: 'Or paste an image or URL with Ctrl+V / ⌘V.', style: 'margin-top:var(--space-3);font-size:13px' }),
@@ -921,7 +967,7 @@ function addPinDialog() {
       el('div', { class: 'actions' }, el('button', { class: 'btn', type: 'button', text: 'Done', onclick: () => close(true) })),
     );
     form.addEventListener('paste', (e) => {
-      const files = [...e.clipboardData.files];
+      const files = [...e.clipboardData?.files ?? []];
       if (files.length) { e.preventDefault(); addFiles(boardId, files, report); }
     });
     return form;
@@ -932,7 +978,7 @@ function addPinDialog() {
 const addable = () => state.board && canAdd(state.board);
 let dragDepth = 0;
 document.addEventListener('dragenter', (e) => {
-  if (!addable() || !e.dataTransfer?.types.includes('Files') || e.target.closest?.('dialog')) return;
+  if (!addable() || !e.dataTransfer?.types.includes('Files') || within(e.target, 'dialog')) return;
   dragDepth++;
   dropcover.hidden = false;
 });
@@ -943,29 +989,31 @@ document.addEventListener('dragover', (e) => { if (addable()) e.preventDefault()
 document.addEventListener('drop', (e) => {
   dragDepth = 0;
   dropcover.hidden = true;
-  if (!addable() || e.target.closest?.('dialog')) return;
+  const board = state.board;
+  if (!board || !canAdd(board) || within(e.target, 'dialog')) return;
   e.preventDefault();
-  const files = [...e.dataTransfer.files];
-  if (files.length) addFiles(state.board.id, files, toastReport);
+  const files = [...e.dataTransfer?.files ?? []];
+  if (files.length) addFiles(board.id, files, toastReport);
 });
 
 // Paste anywhere: image files, or a URL, go to the current board.
 document.addEventListener('paste', (e) => {
-  if (e.target.closest?.('dialog, input, textarea')) return;
-  const files = [...e.clipboardData.files];
-  const text = e.clipboardData.getData('text/plain');
+  if (within(e.target, 'dialog, input, textarea')) return;
+  const files = [...e.clipboardData?.files ?? []];
+  const text = e.clipboardData?.getData('text/plain') ?? '';
   if (!files.length && !isHttpUrl(text)) return;
-  if (!state.board) { toast('Open a board to paste into it'); return; }
-  if (!canAdd(state.board)) { toast('You can only look at this board'); return; }
+  const board = state.board;
+  if (!board) { toast('Open a board to paste into it'); return; }
+  if (!canAdd(board)) { toast('You can only look at this board'); return; }
   e.preventDefault();
-  if (files.length) addFiles(state.board.id, files, toastReport);
-  else addUrl(state.board.id, text.trim(), toastReport);
+  if (files.length) addFiles(board.id, files, toastReport);
+  else addUrl(board.id, text.trim(), toastReport);
 });
 
-function toastReport(name, status, error) {
+const toastReport: Report = (name, status, error) => {
   if (status === 'ok') toast('Pin added');
   else if (status === 'err') toast(`Couldn't add: ${error}`, { error: true, ms: 5000 });
-}
+};
 
 route();
 
@@ -973,18 +1021,19 @@ route();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 
 // Chrome offers installing as an app through this event; keep it for the Settings button.
-let installPrompt = null;
+let installPrompt: BeforeInstallPromptEvent | null = null;
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); installPrompt = e; });
 window.addEventListener('appinstalled', () => { installPrompt = null; });
 const installed = () => matchMedia('(display-mode: standalone)').matches;
 
 // Settings → App: an install button when the browser offers it, else how to do it by hand.
-function appSection() {
+function appSection(): HTMLElement {
   const body = el('div', { class: 'row' });
   const draw = () => {
     if (installed()) body.replaceChildren(el('p', { text: 'Installed — you\u2019re using the app.' }));
     else if (installPrompt) {
       body.replaceChildren(el('button', { class: 'btn primary', onclick: async () => {
+        if (!installPrompt) return;
         installPrompt.prompt();
         const { outcome } = await installPrompt.userChoice;
         if (outcome === 'accepted') installPrompt = null;

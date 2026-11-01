@@ -1,38 +1,43 @@
 // Appearance: mode (system / light / dark) and accent colour, remembered per browser. Each page
-// applies the saved choice in an inline <head> script before the stylesheet loads (no flash); this
-// module owns the Settings controls. The stylesheet uses light-dark() with `color-scheme`, so
+// applies the saved choice in js/boot.ts, a blocking <head> script, before the stylesheet loads
+// (no flash); this module owns the Settings controls. The stylesheet uses light-dark() with `color-scheme`, so
 // forcing a mode is one attribute (data-theme); accents swap --accent through data-accent.
 
-import { el } from './ui.js';
-import { icon } from './icons.js';
+import { el } from './ui.ts';
+import { icon } from './icons.ts';
+import type { IconName } from './icons.ts';
 
 const MODE_KEY = 'pinnery.theme';
 const ACCENT_KEY = 'pinnery.accent';
 
-const MODES = [
+interface Choice { id: string; label: string }
+interface Mode extends Choice { icon: IconName }
+interface Accent extends Choice { color: string }
+
+const MODES: Mode[] = [
   { id: 'system', label: 'System', icon: 'theme-light-dark' },
   { id: 'light', label: 'Light', icon: 'weather-sunny' },
   { id: 'dark', label: 'Dark', icon: 'weather-night' },
 ];
 // Swatch colours match the --accent values in app.css (each passes 4.5:1 with white text).
-const ACCENTS = [
+const ACCENTS: Accent[] = [
   { id: 'pink', label: 'Pink', color: '#d6336c' },
   { id: 'green', label: 'Green', color: '#2d8545' },
   { id: 'blue', label: 'Blue', color: '#1971c2' },
   { id: 'orange', label: 'Orange', color: '#c2410c' },
 ];
 
-function read(key, allowed, fallback) {
+function read(key: string, allowed: string[], fallback: string): string {
   try {
     const v = localStorage.getItem(key);
-    return allowed.includes(v) ? v : fallback;
+    return v !== null && allowed.includes(v) ? v : fallback;
   } catch {
     return fallback;
   }
 }
 
 // The defaults (system mode, pink accent) are stored as "nothing", like the attributes.
-function save(key, attr, value, fallback) {
+function save(key: string, attr: 'theme' | 'accent', value: string, fallback: string) {
   if (value === fallback) delete document.documentElement.dataset[attr];
   else document.documentElement.dataset[attr] = value;
   try {
@@ -41,10 +46,10 @@ function save(key, attr, value, fallback) {
   } catch {}
 }
 
-// The favicon is a separate image, so it gets its own accent-coloured copy (the head script does
-// the same on load). Pink, the default, is the real file.
-function setFavicon(accent) {
-  const link = document.querySelector('link[rel=icon]');
+// The favicon is a separate image, so it gets its own accent-coloured copy (boot.ts does the
+// same on load). Pink, the default, is the real file.
+function setFavicon(accent: string) {
+  const link = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const color = ACCENTS.find((a) => a.id === accent)?.color;
   if (!link || !color) return;
   link.href = accent === 'pink' ? '/icon.svg' : `data:image/svg+xml,${encodeURIComponent(
@@ -52,7 +57,13 @@ function setFavicon(accent) {
 }
 
 // A row of toggle buttons; exactly one is pressed.
-function choiceGroup(label, options, value, onPick, render) {
+function choiceGroup<O extends Choice>(
+  label: string,
+  options: O[],
+  value: string,
+  onPick: (id: string) => void,
+  render: (o: O) => Node[],
+) {
   const group = el('div', { class: 'choices', role: 'radiogroup', 'aria-label': label });
   const draw = () => group.replaceChildren(...options.map((o) => el('button', {
     class: 'choice',
@@ -66,7 +77,7 @@ function choiceGroup(label, options, value, onPick, render) {
 }
 
 // Settings → Appearance.
-export function appearanceSection() {
+export function appearanceSection(): HTMLElement {
   const modes = choiceGroup('Mode', MODES, read(MODE_KEY, ['light', 'dark'], 'system'),
     (v) => save(MODE_KEY, 'theme', v, 'system'),
     (o) => [icon(o.icon), el('span', { text: o.label })]);

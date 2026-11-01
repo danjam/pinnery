@@ -1,6 +1,6 @@
 // Icons: SVG path data copied from Material Design Icons (https://pictogrammers.com/library/mdi/),
 // @mdi/js 7.4.47, Apache-2.0 — see NOTICE. Only the icons we use are kept here, so there is no
-// runtime dependency and no build step. The extension carries its own copy (extension/lib/icons.js).
+// runtime dependency. The extension carries its own copy (extension/lib/icons.ts).
 
 export const paths = {
   'alert-outline': 'M12,2L1,21H23M12,6L19.53,19H4.47M11,10V14H13V10M11,16V18H13V16',
@@ -31,7 +31,9 @@ export const paths = {
 };
 
 // An inline <svg> for the named icon. Sized by CSS (.icon); decorative unless a label is given.
-export function icon(name, { label } = {}) {
+export type IconName = keyof typeof paths;
+
+export function icon(name: IconName, { label }: { label?: string } = {}): SVGSVGElement {
   const d = paths[name];
   if (!d) throw new Error(`unknown icon: ${name}`);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
