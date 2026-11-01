@@ -31,6 +31,11 @@ export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: 
   const getUser = db.prepare<[number], Pick<UserRow, 'id' | 'email' | 'display_name' | 'is_admin'>>('SELECT id, email, display_name, is_admin FROM users WHERE id = ?');
   const adminCount = db.prepare<[], { n: number }>('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1');
   const endSessions = db.prepare<[number]>('DELETE FROM sessions WHERE user_id = ?');
+  const setIsAdmin = db.prepare<[number, number | null]>('UPDATE users SET is_admin = ? WHERE id = ?');
+  const ownedBoards = db.prepare<[number], { id: number }>('SELECT id FROM boards WHERE owner_id = ?');
+  const boardPins = db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?');
+  const deleteBoard = db.prepare<[number]>('DELETE FROM boards WHERE id = ?');
+  const deleteUserRow = db.prepare<[number]>('DELETE FROM users WHERE id = ?');
   const userJson = <T extends { is_admin: number }>(u: T): Omit<T, 'is_admin'> & { is_admin: boolean } => ({ ...u, is_admin: !!u.is_admin });
 
   const findUser = (id: number | null) => {
@@ -45,7 +50,7 @@ export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: 
   const setAdmin = db.transaction((id: number | null, isAdmin: boolean) => {
     const user = findUser(id);
     if (!isAdmin && lastAdmin(user)) throw new ImageError(409, 'The last admin can’t be demoted.');
-    db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(isAdmin ? 1 : 0, id);
+    setIsAdmin.run(isAdmin ? 1 : 0, id);
     if (!isAdmin && user.is_admin) endSessions.run(user.id);
     return getUser.get(user.id)!;
   });
@@ -62,14 +67,12 @@ export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: 
     const user = findUser(id);
     if (user.id === callerId) throw new ImageError(409, 'You can’t delete yourself — ask another admin.');
     if (lastAdmin(user)) throw new ImageError(409, 'The last admin can’t be deleted.');
-    const boardPins = db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?');
-    const deleteBoard = db.prepare<[number]>('DELETE FROM boards WHERE id = ?');
     const shas: string[] = [];
-    for (const { id: boardId } of db.prepare<[number], { id: number }>('SELECT id FROM boards WHERE owner_id = ?').all(user.id)) {
+    for (const { id: boardId } of ownedBoards.all(user.id)) {
       shas.push(...deletePinRows(boardPins.all(boardId).map((p) => p.id)).shas);
       deleteBoard.run(boardId);
     }
-    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    deleteUserRow.run(user.id);
     return shas;
   });
 

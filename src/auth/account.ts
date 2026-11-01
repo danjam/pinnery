@@ -11,6 +11,8 @@ export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChang
     getUser, listTokenRows, deleteTokenById, deleteToken, throttled,
     cookieHeader, authenticate, checkPassword, changeRequired, identify, startSession, setPassword, mintToken,
   } = core;
+  const setDisplayName = db.prepare<[string, number]>('UPDATE users SET display_name = ? WHERE id = ?');
+  const deleteAllTokens = db.prepare<[number]>("DELETE FROM sessions WHERE kind = 'token' AND user_id = ?");
 
   // POST /api/login — body { email, password }.
   async function login(req: Request, res: Response) {
@@ -46,7 +48,7 @@ export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChang
   function updateMe(req: Request, res: Response) {
     const name = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
     if (!name || name.length > 100) return res.status(400).json({ error: 'display name must be 1–100 characters' });
-    db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(name, req.user.id);
+    setDisplayName.run(name, req.user.id);
     res.json({ ...req.user, display_name: name });
   }
 
@@ -81,7 +83,7 @@ export function createAccount(db: Db, core: Core, { baseUrl, notifyPasswordChang
 
   // DELETE /api/tokens — revoke all of the caller's API tokens.
   function revokeAllTokens(req: Request, res: Response) {
-    const { changes } = db.prepare("DELETE FROM sessions WHERE kind = 'token' AND user_id = ?").run(req.user.id);
+    const { changes } = deleteAllTokens.run(req.user.id);
     res.json({ ok: true, revoked: changes });
   }
 

@@ -11,6 +11,7 @@ import { MIN_PASSWORD, normaliseEmail, validEmail } from './util.ts';
 export function createReset(db: Db, core: Core, links: Links, { mailer, publicUrl }: { mailer: Mailer; publicUrl: string }) {
   const { getUser, getUserByEmail, forgotByIp, forgotByEmail, startSession, setPassword } = core;
   const { baseUrl, deleteUserLinks, issueLink, lookupLink, sendQuietly, notifyPasswordChanged } = links;
+  const tokenCount = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE kind = 'token' AND user_id = ?");
 
   // Make a reset link for a user, cancelling their older ones. For the forgot flow here and for an
   // admin handing one over by hand. Returns { link, expires_at }.
@@ -98,7 +99,7 @@ export function createReset(db: Db, core: Core, links: Links, { mailer, publicUr
     }
     startSession(res, user.id);
     notifyPasswordChanged(user, baseUrl(req));
-    const { n } = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE kind = 'token' AND user_id = ?").get(user.id)!;
+    const { n } = tokenCount.get(user.id)!;
     res.json({ ok: true, tokens: n });
   }
 

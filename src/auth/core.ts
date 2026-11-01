@@ -74,6 +74,10 @@ export function createCore(db: Db) {
   const touch = db.prepare("UPDATE sessions SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?");
   const deleteToken = db.prepare('DELETE FROM sessions WHERE token_hash = ?');
   const purgeExpired = db.prepare("DELETE FROM sessions WHERE expires_at IS NOT NULL AND expires_at <= strftime('%Y-%m-%dT%H:%M:%fZ', 'now')");
+  const claimLink = db.prepare<[number | bigint]>('DELETE FROM email_tokens WHERE id = ?');
+  const setPasswordHash = db.prepare<[string, number]>('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?');
+  const deleteResetLinks = db.prepare<[number]>("DELETE FROM email_tokens WHERE kind = 'reset' AND user_id = ?");
+  const endOtherSessions = db.prepare<[number, number | null]>("DELETE FROM sessions WHERE kind = 'session' AND user_id = ? AND id IS NOT ?");
 
   const loginFailures = failureCounter();
   const exchangeFailures = failureCounter();
@@ -152,10 +156,10 @@ export function createCore(db: Db) {
   // emailed link that authorised it is claimed in the same transaction: if a concurrent request
   // used it while this one was hashing, nothing changes and it returns false.
   const storePassword = db.transaction((userId: number, hash: string, keepSessionId: number | null, linkId?: number | bigint) => {
-    if (linkId !== undefined && !db.prepare('DELETE FROM email_tokens WHERE id = ?').run(linkId).changes) return false;
-    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hash, userId);
-    db.prepare("DELETE FROM email_tokens WHERE kind = 'reset' AND user_id = ?").run(userId);
-    db.prepare("DELETE FROM sessions WHERE kind = 'session' AND user_id = ? AND id IS NOT ?").run(userId, keepSessionId ?? null);
+    if (linkId !== undefined && !claimLink.run(linkId).changes) return false;
+    setPasswordHash.run(hash, userId);
+    deleteResetLinks.run(userId);
+    endOtherSessions.run(userId, keepSessionId ?? null);
     return true;
   });
   async function setPassword(userId: number, next: string, keepSessionId: number | null, linkId?: number | bigint) {
