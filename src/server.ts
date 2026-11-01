@@ -188,7 +188,7 @@ app.get('/extension.zip', auth.requirePage, async (req, res) => {
 });
 
 const index = path.join(publicDir, 'index.html');
-// Android share target, after the service worker has parked the image (see sw.js).
+// Android share target, after the service worker has parked the image (see public/sw.ts).
 app.get('/share', auth.requirePage, (req, res) => res.sendFile(path.join(publicDir, 'share.html')));
 app.get(['/', '/b/:id', '/settings', '/settings/:tab'], auth.requirePage, (req, res) => {
   res.set('Cache-Control', 'no-cache');

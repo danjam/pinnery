@@ -48,7 +48,7 @@ function parseCookies(header: string | undefined) {
 // browser would, then checked to stay on our origin: a pattern check alone misses tricks like
 // "/\t/evil.com", which browsers read as //evil.com. Returns the normalised path, refusing one that
 // starts with // (from "/..//evil.com"): that would be read as another host when used again.
-// Unparseable values (e.g. "//[") are refused too. Mirrored in public/js/next.js.
+// Unparseable values (e.g. "//[") are refused too. Mirrored in public/js/next.ts.
 export function safeNext(v: unknown): string | null {
   if (typeof v !== 'string' || !v.startsWith('/') || v.length > 2048) return null;
   const base = 'http://pinnery.invalid';
