@@ -159,13 +159,16 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   });
 
   // Delete a board. Body: { move_to: <board id> } re-homes its pins; otherwise they're deleted.
+  // Returns the deleted pins' hashes, for removeUnused.
   const deleteBoard = db.transaction((id: number, moveTo: number | null) => {
+    let shas: string[] = [];
     if (moveTo) {
       db.prepare('UPDATE pins SET board_id = ? WHERE board_id = ?').run(moveTo, id);
     } else {
-      deletePinRows(db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?').all(id).map((r) => r.id));
+      ({ shas } = deletePinRows(db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?').all(id).map((r) => r.id)));
     }
     db.prepare('DELETE FROM boards WHERE id = ?').run(id);
+    return shas;
   });
 
   api.delete('/boards/:id', (req, res) => {
@@ -176,7 +179,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       moveTo = toId(req.body.move_to);
       if (!moveTo || moveTo === id || !access.canEditBoard(req.user.id, moveTo)) throw bad('invalid destination board');
     }
-    deleteBoard(id, moveTo);
+    removeUnused(deleteBoard(id, moveTo));
     res.json({ ok: true });
   });
 
@@ -287,13 +290,28 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return getPin.get(lastInsertRowid)!;
   }
 
-  // Fingerprint, store and insert. Identical bytes share one file (see images.ts), so the same
-  // image pinned twice — by anyone — is two rows and one original.
+  // Store a fingerprinted image and insert its row (insertRow). Identical bytes share one file (see
+  // images.ts), so the same image pinned twice — by anyone — is two rows and one original. The
+  // original is written and the row inserted with no await between: once the row is in, the
+  // refcount keeps the file, and before that no delete can run. Thumbs come after; if they fail,
+  // the pin is removed again.
+  async function storePin<T extends { id: number }>(buf: Buffer, info: Fingerprint, insertRow: () => T): Promise<T> {
+    store.saveOriginal(buf, info);
+    const row = insertRow();
+    try {
+      await store.saveThumbs(buf, info);
+    } catch (e) {
+      deletePins([row.id]);
+      throw e;
+    }
+    return row;
+  }
+
+  // Fingerprint, store and insert.
   async function savePin(userId: number, boardId: number, buf: Buffer, meta: PinMeta) {
     if (!access.canEditBoard(userId, boardId)) throw notFound('board');
     const info = await store.fingerprint(buf);
-    await store.save(buf, info);
-    return insert(boardId, info, meta);
+    return storePin(buf, info, () => insert(boardId, info, meta));
   }
 
   // Server-side fetch of an image URL. Body: { board_id, url, source_url?, page_title? }.
@@ -369,17 +387,29 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return [...new Set(ids)];
   }
 
-  // Delete pin rows and, for any hash no longer referenced, the files. Call inside a transaction.
+  // Delete pin rows. Call inside a transaction, then pass the returned hashes to removeUnused once
+  // it has committed: files go only after the rows are gone for good, never ahead of a rollback.
   function deletePinRows(ids: number[]) {
-    if (!ids.length) return 0;
+    if (!ids.length) return { changes: 0, shas: [] };
     const ph = placeholders(ids.length);
     const shas = db.prepare<number[], { sha256: string }>(`SELECT DISTINCT sha256 FROM pins WHERE id IN (${ph})`).all(...ids).map((r) => r.sha256);
     const { changes } = db.prepare(`DELETE FROM pins WHERE id IN (${ph})`).run(...ids);
-    const stillUsed = db.prepare<[string]>('SELECT 1 FROM pins WHERE sha256 = ? LIMIT 1');
+    return { changes, shas };
+  }
+
+  // Remove the files of any of these hashes no pin references. No await between the commit and
+  // this call: a save of the same bytes could otherwise find the file, then lose it (see storePin).
+  const stillUsed = db.prepare<[string]>('SELECT 1 FROM pins WHERE sha256 = ? LIMIT 1');
+  function removeUnused(shas: Iterable<string>) {
     for (const sha of shas) if (!stillUsed.get(sha)) store.removeFiles(sha);
+  }
+
+  const deletePinsTx = db.transaction(deletePinRows);
+  function deletePins(ids: number[]) {
+    const { changes, shas } = deletePinsTx(ids);
+    removeUnused(shas);
     return changes;
   }
-  const deletePins = db.transaction(deletePinRows);
 
   // Move pins; a board whose cover moves away falls back to its newest pin.
   const movePins = db.transaction((ids: number[], boardId: number) => {
@@ -413,10 +443,10 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   // ---- export / import (see transfer.ts) ---------------------------------------------------
 
-  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl }));
+  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin }));
 
-  // deletePinRows is for users.ts, which deletes a user's boards inside its own transaction.
-  return { api, pick: createPickRoutes(), deletePinRows };
+  // deletePinRows and removeUnused are for users.ts, which deletes a user's boards inside its own transaction.
+  return { api, pick: createPickRoutes(), deletePinRows, removeUnused };
 
   // ---- /pick/:token — the board picker page and its token-scoped API ------------------------
   // No session or bearer: the pick token in the path is the credential, good for exactly one
@@ -494,8 +524,8 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       const board = boardId && access.canEditBoard(req.pick.userId, boardId);
       if (!board) throw notFound('board');
       const { buf, info, meta } = pending.take(req.params.token)!; // the scoped middleware's pending.get just found it
-      await store.save(buf, info);
-      res.status(201).json({ pin: insert(board.id, info, meta), board: { id: board.id, name: board.name } });
+      const pin = await storePin(buf, info, () => insert(board.id, info, meta));
+      res.status(201).json({ pin, board: { id: board.id, name: board.name } });
     });
 
     scoped.post('/discard', (req: PickRequest, res) => {

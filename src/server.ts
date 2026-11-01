@@ -215,7 +215,7 @@ const routes = createRoutes(db, store, { dataDir: DATA_DIR, mailer, publicUrl: P
 app.use('/api', auth.requireApi, routes.api);
 // Settings → Users (admins): list, promote/demote, delete, hand over a reset link. See users.ts.
 // After the API, whose /api/users/directory (the share picker) is for everyone.
-app.use('/api/users', json, auth.requireApi, auth.requireAdmin, createUserRoutes(db, { auth, deletePinRows: routes.deletePinRows }));
+app.use('/api/users', json, auth.requireApi, auth.requireAdmin, createUserRoutes(db, { auth, deletePinRows: routes.deletePinRows, removeUnused: routes.removeUnused }));
 app.use(['/i', '/t'], auth.requireApi);
 app.use(createImageRoutes(db, store));
 // The extension's board picker: a page authenticated by its pending token alone (see routes.ts).

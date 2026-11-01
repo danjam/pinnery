@@ -96,10 +96,15 @@ export function createStore(dataDir: string) {
     return { ...info, sha256 };
   }
 
-  // Store the bytes and thumbnails for a fingerprinted buffer (no-op for a hash already present).
-  async function save(buf: Buffer, { sha256 }: { sha256: string }) {
+  // Store a fingerprinted buffer (no-op for files already present), in two steps. saveOriginal is
+  // synchronous, so the caller can insert the pin row in the same tick: no delete of the last other
+  // pin with this hash can run in between and take the file (see removeUnused in routes.ts).
+  // saveThumbs comes after; thumbs are regenerable, see thumb().
+  function saveOriginal(buf: Buffer, { sha256 }: { sha256: string }) {
     const file = originalPath(sha256);
     if (!fs.existsSync(file)) writeAtomic(file, buf);
+  }
+  async function saveThumbs(buf: Buffer, { sha256 }: { sha256: string }) {
     for (const size of THUMB_SIZES) {
       if (!fs.existsSync(thumbPath(sha256, size))) writeAtomic(thumbPath(sha256, size), await makeThumb(buf, size));
     }
@@ -156,7 +161,7 @@ export function createStore(dataDir: string) {
     return removed;
   }
 
-  return { fingerprint, save, makeThumb, thumb, original, removeFiles, sweep };
+  return { fingerprint, saveOriginal, saveThumbs, makeThumb, thumb, original, removeFiles, sweep };
 }
 
 // An error with an HTTP status and a message safe to show. `extra` is merged into the JSON body.
