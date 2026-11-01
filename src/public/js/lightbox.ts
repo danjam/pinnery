@@ -1,11 +1,21 @@
-import { el } from './ui.js';
-import { icon } from './icons.js';
-import { originalUrl } from './api.js';
+import { el } from './ui.ts';
+import { icon } from './icons.ts';
+import { originalUrl } from './api.ts';
+import type { Pin } from './api.ts';
+
+// What an action does with the current pin. Resolving truthy means the pin left the board (only
+// moving and deleting care).
+type PinAction = (pin: Pin) => unknown;
 
 // Full-screen viewer over an ordered pin list. Actions call back into the board view, which
 // owns the data; the lightbox just redraws from whatever list it's given. Only the actions passed
 // get a button (and the Delete key): a shared board's viewer has none, its editor only Delete.
-export function openLightbox({ pins, index, actions = {} }) {
+export function openLightbox({ pins, index, actions = {} }: {
+  pins: Pin[];
+  index: number;
+  actions?: { setCover?: PinAction | false; move?: PinAction | false; remove?: PinAction | false };
+}) {
+  const { setCover, move, remove: removeAction } = actions;
   let i = index;
   let busy = false;   // an action's dialog is open: ignore keys and buttons until it settles
   const img = el('img', { alt: '' });
@@ -23,14 +33,14 @@ export function openLightbox({ pins, index, actions = {} }) {
     el('div', { class: 'bar' },
       info,
       fullSize,
-      actions.setCover && el('button', { class: 'btn', onclick: () => run(actions.setCover) }, icon('image-outline'), el('span', { text: 'Set as cover' })),
-      actions.move && el('button', { class: 'btn', onclick: () => run(actions.move, true) }, icon('folder-move-outline'), el('span', { text: 'Move' })),
-      actions.remove && el('button', { class: 'btn danger', onclick: () => run(actions.remove, true) }, icon('delete-outline'), el('span', { text: 'Delete' })),
+      setCover && el('button', { class: 'btn', onclick: () => run(setCover) }, icon('image-outline'), el('span', { text: 'Set as cover' })),
+      move && el('button', { class: 'btn', onclick: () => run(move, true) }, icon('folder-move-outline'), el('span', { text: 'Move' })),
+      removeAction && el('button', { class: 'btn danger', onclick: () => run(removeAction, true) }, icon('delete-outline'), el('span', { text: 'Delete' })),
     ),
   );
 
   // Run an action on the current pin. `leaves`: a truthy result means the pin left the board.
-  async function run(action, leaves = false) {
+  async function run(action: PinAction, leaves = false) {
     if (busy) return;
     busy = true;
     try {
@@ -40,7 +50,7 @@ export function openLightbox({ pins, index, actions = {} }) {
     }
   }
 
-  function show(n) {
+  function show(n: number) {
     if (!pins.length) return d.close();
     i = (n + pins.length) % pins.length;
     const pin = pins[i];
@@ -55,7 +65,7 @@ export function openLightbox({ pins, index, actions = {} }) {
       ? el('a', { href: pin.source_url, target: '_blank', rel: 'noopener noreferrer', title: pin.source_url }, icon('open-in-new'), el('span', { text: label }))
       : el('span', { text: label }));
     info.append(el('span', { text: `· ${pin.width}×${pin.height}${pin.animated ? ' · animated' : ''}` }));
-    d.querySelectorAll('.nav').forEach((b) => { b.hidden = pins.length < 2; });
+    d.querySelectorAll<HTMLElement>('.nav').forEach((b) => { b.hidden = pins.length < 2; });
   }
 
   // After a pin leaves the board (moved or deleted), drop it and show the next one.
@@ -68,7 +78,7 @@ export function openLightbox({ pins, index, actions = {} }) {
   d.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowLeft') show(i - 1);
     else if (e.key === 'ArrowRight') show(i + 1);
-    else if (e.key === 'Delete' && actions.remove) run(actions.remove, true);   // opens the confirm, never deletes directly
+    else if (e.key === 'Delete' && removeAction) run(removeAction, true);   // opens the confirm, never deletes directly
     else if (e.key === 'f' || e.key === 'F') { if (!busy) window.open(originalUrl(pins[i]), '_blank', 'noopener'); }
   });
   d.addEventListener('click', (e) => { if (e.target === d || e.target === img.parentElement) d.close(); });
@@ -77,7 +87,7 @@ export function openLightbox({ pins, index, actions = {} }) {
   // Controls (bar, arrows, counter, close) fade after a moment without mouse movement or keys,
   // leaving just the image. They stay while hovered or focused, or while an action is running.
   const IDLE_MS = 2000;
-  let idleTimer = null;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const controls = () => d.querySelectorAll('.bar, .nav, .close, .counter');
   // :focus-visible, not :focus-within — showModal() focuses a control, which shouldn't pin them on.
   const engaged = () => busy || [...controls()].some((c) => c.matches(':hover, :focus-visible, :has(:focus-visible)'));
@@ -94,7 +104,7 @@ export function openLightbox({ pins, index, actions = {} }) {
   d.addEventListener('close', () => clearTimeout(idleTimer));
 
   // Touch: swipe between pins; a tap on the image shows or hides the controls (no mouse to wake them).
-  let touchX = null;
+  let touchX: number | null = null;
   d.addEventListener('touchstart', (e) => { touchX = e.touches[0].clientX; }, { passive: true });
   d.addEventListener('touchend', (e) => {
     if (touchX == null) return;

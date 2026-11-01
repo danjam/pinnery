@@ -1,34 +1,71 @@
 // Small DOM helpers, toasts, popup menus and <dialog>-based prompts.
 
-import { icon } from './icons.js';
+import { icon } from './icons.ts';
+import type { IconName } from './icons.ts';
 
-export function el(tag, attrs = {}, ...children) {
+// Anything el() takes as a child: nodes and text, with null / false skipped (so `cond && el(…)` works).
+export type Child = Node | string | null | undefined | false;
+type Children = (Child | Child[])[];
+
+// onclick, oninput, …: the listener gets the event typed for the element it's on, with
+// currentTarget narrowed to that element.
+type Handlers<T extends HTMLElement> = {
+  [E in keyof HTMLElementEventMap as `on${E}`]?:
+    | ((e: HTMLElementEventMap[E] & { currentTarget: T }) => void)
+    | null
+    | false;
+};
+// Every other key is set as an attribute (true sets it empty, false / null skip it). `never`
+// parameters let any listener type through the index signature; the Handlers keys above are what
+// callers are actually checked against.
+type AttrValue = string | number | boolean | null | undefined | Record<string, string | number>
+  | ((e: never) => void);
+type Attrs<T extends HTMLElement> = Handlers<T> & {
+  class?: string | null | false;
+  text?: string | number | null;
+  html?: string;
+  dataset?: Record<string, string | number>;
+  [attr: string]: AttrValue;
+};
+
+// Drops the null / false children.
+const shown = (c: Child): c is Node | string => c != null && c !== false;
+
+export function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs: Attrs<HTMLElementTagNameMap[K]> = {},
+  ...children: Children
+): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
     if (v == null || v === false) continue;
-    if (k === 'class') node.className = v;
-    else if (k === 'text') node.textContent = v;
-    else if (k === 'html') node.innerHTML = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
+    if (k === 'class') node.className = String(v);
+    else if (k === 'text') node.textContent = String(v);
+    else if (k === 'html') node.innerHTML = String(v);
+    // The cast is the one place the listener's event type is erased: k.slice(2) is a string.
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v as EventListener);
     else if (k === 'dataset') Object.assign(node.dataset, v);
     else if (v === true) node.setAttribute(k, '');
-    else node.setAttribute(k, v);
+    else node.setAttribute(k, String(v));
   }
-  node.append(...children.flat().filter((c) => c != null && c !== false));
+  node.append(...children.flat().filter(shown));
   return node;
 }
 
 // Toast with a countdown bar along its bottom edge. Hovering pauses both the bar and the dismiss
 // timer; `action` makes it clickable (click runs it and dismisses). The extension's in-page toast
 // (extension/content.js) mirrors this markup, styling and behaviour.
-export function toast(message, { error = false, ms = 3000, action = null } = {}) {
+export function toast(
+  message: string,
+  { error = false, ms = 3000, action = null }: { error?: boolean; ms?: number; action?: (() => void) | null } = {},
+): HTMLElement {
   const t = el(action ? 'button' : 'div', {
     class: `toast${error ? ' error' : ''}${action ? ' clickable' : ''}`,
     role: 'status',
     style: `--toast-ms:${ms}ms`,
     onclick: action && (() => { dismiss(); action(); }),
   }, error && icon('alert-outline'), el('span', { class: 'msg', text: message }), el('span', { class: 'bar' }));
-  let timer = null;
+  let timer: ReturnType<typeof setTimeout>;
   let left = ms;
   let since = 0;
   const dismiss = () => { clearTimeout(timer); t.remove(); };
@@ -45,9 +82,9 @@ export function toast(message, { error = false, ms = 3000, action = null } = {})
 // when that closes. Fixed positioning keeps it in the viewport corner either way, with one style.
 // A popover="manual" container would paint above the modal too, but anything outside the dialog's
 // subtree stays inert (whatwg/html#9936), so it couldn't be hovered or clicked.
-function toastHome() {
-  const box = document.getElementById('toasts');
-  const modal = [...document.querySelectorAll('dialog:modal')].at(-1);
+function toastHome(): HTMLElement {
+  const box = document.getElementById('toasts')!;   // every page that toasts has it
+  const modal = [...document.querySelectorAll<HTMLDialogElement>('dialog:modal')].at(-1);
   const home = modal || document.body;
   if (box.parentNode !== home) {
     home.append(box);
@@ -56,8 +93,17 @@ function toastHome() {
   return box;
 }
 
+export interface MenuItem {
+  label: string;
+  icon?: IconName;
+  danger?: boolean;
+  onclick: () => void;
+}
+
 // Popup menu anchored to an element. items: [{ label, icon, danger, onclick }] or '-' for a divider.
-export function menu(anchor, items) {
+export type MenuEntry = MenuItem | '-';
+
+export function menu(anchor: HTMLElement, items: MenuEntry[]) {
   closeMenu();
   const m = el('div', { class: 'menu', role: 'menu' });
   for (const item of items) {
@@ -81,9 +127,9 @@ export function menu(anchor, items) {
     document.addEventListener('keydown', onEsc);
   });
 }
-let openMenu = null;
-function onOutside(e) { if (openMenu && !openMenu.contains(e.target)) closeMenu(); }
-function onEsc(e) { if (e.key === 'Escape') closeMenu(); }
+let openMenu: HTMLElement | null = null;
+function onOutside(e: PointerEvent) { if (openMenu && !openMenu.contains(e.target as Node)) closeMenu(); }
+function onEsc(e: KeyboardEvent) { if (e.key === 'Escape') closeMenu(); }
 export function closeMenu() {
   if (!openMenu) return;
   openMenu.remove();
@@ -94,17 +140,20 @@ export function closeMenu() {
 
 // Open a dialog with the given body nodes. Resolves with whatever close(value) is called with
 // (undefined on Escape / backdrop click).
-export function dialog(build, { className = '' } = {}) {
+export function dialog<T = unknown>(
+  build: (close: (value?: T) => void) => Child | Child[],
+  { className = '' }: { className?: string } = {},
+): Promise<T | undefined> {
   return new Promise((resolve) => {
     const d = el('dialog', { class: className });
     let settled = false;
-    const close = (value) => {
+    const close = (value?: T) => {
       if (settled) return;
       settled = true;
       d.close();
       resolve(value);
     };
-    d.append(...[build(close)].flat().filter((c) => c != null && c !== false));
+    d.append(...[build(close)].flat().filter(shown));
     d.addEventListener('close', () => { close(undefined); d.remove(); });
     d.addEventListener('click', (e) => { if (e.target === d) close(undefined); });
     document.body.append(d);
@@ -112,8 +161,8 @@ export function dialog(build, { className = '' } = {}) {
   });
 }
 
-export function prompt({ title, label = 'Name', value = '', ok = 'Save' }) {
-  return dialog((close) => {
+export function prompt({ title, label = 'Name', value = '', ok = 'Save' }: { title: string; label?: string; value?: string; ok?: string }) {
+  return dialog<string>((close) => {
     const input = el('input', { class: 'field', value, placeholder: label, maxlength: 100, autofocus: true });
     const form = el('form', { method: 'dialog', onsubmit: (e) => { e.preventDefault(); if (input.value.trim()) close(input.value.trim()); } },
       el('h2', { text: title }),
@@ -128,8 +177,8 @@ export function prompt({ title, label = 'Name', value = '', ok = 'Save' }) {
   });
 }
 
-export function confirm({ title, message, ok = 'Delete', danger = true }) {
-  return dialog((close) => [
+export function confirm({ title, message, ok = 'Delete', danger = true }: { title: string; message?: string; ok?: string; danger?: boolean }) {
+  return dialog<boolean>((close) => [
     el('h2', { text: title }),
     message && el('p', { text: message }),
     el('div', { class: 'actions' },
@@ -140,9 +189,15 @@ export function confirm({ title, message, ok = 'Delete', danger = true }) {
 }
 
 // Choose a board. boards: [{id, name}], excluding `exclude`. Resolves with the id, or 'new' to create one.
-export function pickBoard({ title, boards, exclude, ok = 'Move', allowNew = true }) {
+export function pickBoard({ title, boards, exclude, ok = 'Move', allowNew = true }: {
+  title: string;
+  boards: { id: number; name: string }[];
+  exclude?: number;
+  ok?: string;
+  allowNew?: boolean;
+}) {
   const options = boards.filter((b) => b.id !== exclude);
-  return dialog((close) => {
+  return dialog<number | 'new'>((close) => {
     const select = el('select', { class: 'field', autofocus: true },
       ...options.map((b) => el('option', { value: b.id, text: b.name })),
       allowNew && el('option', { value: 'new', text: '+ New board…' }),

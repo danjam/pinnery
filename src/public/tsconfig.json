@@ -1,14 +1,16 @@
 {
-  // The web app's scripts, bundled for the browser by scripts/build.ts.
+  // The web app's scripts, bundled for the browser by scripts/build.ts. The service worker needs
+  // the WebWorker lib, which can't share a program with the DOM one: see tsconfig.sw.json.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "esnext",
     "moduleResolution": "bundler",
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": [],
-    // Until the scripts are converted: their .js is accepted but not checked.
-    "allowJs": true,
-    "checkJs": false
+    // Every script is a module (the page scripts have no imports or exports, but are loaded as
+    // type="module"), so their top-level names stay out of the global scope.
+    "moduleDetection": "force"
   },
-  "include": ["."]
+  "include": ["."],
+  "exclude": ["sw.ts"]
 }

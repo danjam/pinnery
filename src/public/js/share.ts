@@ -1,13 +1,15 @@
 // Android share target, step 2. The service worker (sw.js) parked the shared image in a cache and
 // sent us here; upload it as a pending pick and hand over to the board picker (/pick/<token>).
 
-import { el } from './ui.js';
+import { el } from './ui.ts';
+import { errorMessage } from './api.ts';
 
 const CACHE = 'pinnery-share';
-const text = document.getElementById('notice-text');
-const actions = document.getElementById('notice-actions');
+// The page's HTML has these elements.
+const text = document.getElementById('notice-text')!;
+const actions = document.getElementById('notice-actions')!;
 
-function stop(message) {
+function stop(message: string) {
   text.textContent = message;
   actions.replaceChildren(el('a', { class: 'btn primary', href: '/', text: 'Open Pinnery' }));
 }
@@ -16,7 +18,8 @@ async function run() {
   const cache = await caches.open(CACHE);
   const res = await cache.match('/share/pending');
   if (!res) return stop('Nothing to pin. Share an image to Pinnery from another app.');
-  let meta = {};
+  // What sw.ts parked in X-Share (all of it optional: it's whatever the sharing app sent).
+  let meta: { url?: string; text?: string; title?: string; fields?: string[] } = {};
   try { meta = JSON.parse(decodeURIComponent(res.headers.get('X-Share') || '')); } catch {}
   // Apps put the source link in `url` or, often, in `text`.
   const link = [meta.url, meta.text].map((s) => (s || '').trim()).find((s) => /^https?:\/\/\S+$/i.test(s)) || '';
@@ -35,10 +38,10 @@ async function run() {
     headers: { 'Content-Type': res.headers.get('Content-Type') || 'application/octet-stream' },
     body: await res.blob(),
   });
-  const body = await up.json().catch(() => ({}));
+  const body: { error?: string; token?: string } = await up.json().catch(() => ({}));
   if (!up.ok) return stop(`Couldn't upload: ${body.error || up.status}`);
   await cache.delete('/share/pending');
   location.replace(`/pick/${body.token}`);
 }
 
-run().catch((e) => stop(`Couldn't share: ${e.message}`));
+run().catch((e) => stop(`Couldn't share: ${errorMessage(e)}`));

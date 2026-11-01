@@ -1,8 +1,12 @@
 // Script for login.html (kept out of the page so the CSP can forbid inline scripts).
 
-import { nextPath } from './next.js';
-const form = document.getElementById('login');
-const error = document.getElementById('error');
+import { nextPath } from './next.ts';
+// The page's HTML has these elements.
+const form = document.getElementById('login') as HTMLFormElement & {
+  email: HTMLInputElement;
+  password: HTMLInputElement;
+};
+const error = document.getElementById('error')!;
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   error.hidden = true;
@@ -16,7 +20,7 @@ form.addEventListener('submit', async (e) => {
     location.replace(nextPath());
     return;
   }
-  const body = await res.json().catch(() => ({}));
+  const body: { error?: string } = await res.json().catch(() => ({}));
   error.textContent = body.error || `Sign in failed (${res.status})`;
   error.hidden = false;
   form.password.select();

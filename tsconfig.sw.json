@@ -1,0 +1,14 @@
+{
+  // The web app's service worker (src/public/sw.ts), checked on its own: it needs the WebWorker
+  // lib, which conflicts with the DOM one in src/public/tsconfig.json. Kept out of src/public so
+  // the build doesn't copy it into dist/public.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024", "webworker"],
+    "types": [],
+    "moduleDetection": "force"
+  },
+  "include": ["src/public/sw.ts"]
+}
