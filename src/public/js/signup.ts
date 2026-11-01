@@ -19,15 +19,16 @@ const api = async <T>(method: string, path: string, body?: unknown): Promise<T> 
 };
 const form = document.getElementById('form') as HTMLFormElement & {
   email: HTMLInputElement;
-  name: HTMLInputElement;
   password: HTMLInputElement;
   again: HTMLInputElement;
 };
+// Not form.name: that's the form's own name attribute as far as the types know.
+const nameInput = form.elements.namedItem('name') as HTMLInputElement;
 try {
   const { email } = await api<{ email: string }>('GET', `/api/signup/${token}`);
   form.email.value = email;
   form.hidden = false;
-  form.name.focus();
+  nameInput.focus();
 } catch (e) {
   replace(p(errorMessage(e), 'muted'), link('/login', 'Sign in'));
 }
@@ -36,7 +37,7 @@ form.addEventListener('submit', async (e) => {
   error.hidden = true;
   if (form.password.value !== form.again.value) { fail('The passwords don’t match'); form.again.select(); return; }
   try {
-    await api('POST', `/api/signup/${token}`, { display_name: form.name.value, password: form.password.value });
+    await api('POST', `/api/signup/${token}`, { display_name: nameInput.value, password: form.password.value });
     location.replace('/');
   } catch (err) {
     fail(errorMessage(err));

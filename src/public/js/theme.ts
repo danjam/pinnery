@@ -1,6 +1,6 @@
 // Appearance: mode (system / light / dark) and accent colour, remembered per browser. Each page
-// applies the saved choice in an inline <head> script before the stylesheet loads (no flash); this
-// module owns the Settings controls. The stylesheet uses light-dark() with `color-scheme`, so
+// applies the saved choice in js/boot.ts, a blocking <head> script, before the stylesheet loads
+// (no flash); this module owns the Settings controls. The stylesheet uses light-dark() with `color-scheme`, so
 // forcing a mode is one attribute (data-theme); accents swap --accent through data-accent.
 
 import { el } from './ui.ts';
@@ -46,8 +46,8 @@ function save(key: string, attr: 'theme' | 'accent', value: string, fallback: st
   } catch {}
 }
 
-// The favicon is a separate image, so it gets its own accent-coloured copy (the head script does
-// the same on load). Pink, the default, is the real file.
+// The favicon is a separate image, so it gets its own accent-coloured copy (boot.ts does the
+// same on load). Pink, the default, is the real file.
 function setFavicon(accent: string) {
   const link = document.querySelector<HTMLLinkElement>('link[rel=icon]');
   const color = ACCENTS.find((a) => a.id === accent)?.color;
