@@ -33,7 +33,7 @@ The extension isn't versioned separately: the server fingerprints the built exte
 - `src/server.ts` wires modules and lists every route.
 - Fields the middleware sets on `req` (`session`, `user`, `pick`) are declared once, in `src/express.d.ts`.
 - `src/access.ts` is the only place access is decided (owner / viewer / editor). All board, pin and image queries go through it, and foreign ids return 404.
-- `src/db.ts` `migrate()` upgrades existing databases in place. Schema changes go there.
+- `src/db.ts`: the schema version is SQLite's `user_version`. To change the schema, update `SCHEMA` (new databases) and append a step to `MIGRATIONS` (existing ones). Never edit a step that has shipped.
 - Originals are content-addressed by SHA-256 and shared across pins and users; deletes are refcounted.
 - Server-side URL fetches go through the SSRF guard in `src/fetch.ts`.
 - Extension and share-target saves upload first to `/api/pick/*`, where the image is parked in memory (`src/pending.ts`). The server-hosted `/pick/<token>` page then chooses the board; its token is the page's only credential.

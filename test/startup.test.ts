@@ -7,6 +7,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import Database from 'better-sqlite3';
 import { startServer } from './helpers/server.ts';
 import type { Server } from './helpers/server.ts';
 
@@ -63,6 +64,31 @@ describe('PINNERY_PROXIES not a number', () => {
     const code = await new Promise((resolve) => child.once('exit', resolve));
     assert.equal(code, 1);
     assert.match(out, /PINNERY_PROXIES must be the number of proxies.*refusing to start/);
+  });
+});
+
+describe('database from a newer Pinnery', () => {
+  it('refuses to start', { timeout: 10_000 }, async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    const db = new Database(path.join(dataDir, 'pinnery.db'));
+    db.exec('CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    db.pragma('user_version = 9999');
+    db.close();
+    const env = {
+      PATH: process.env.PATH,
+      DATA_DIR: dataDir,
+      PORT: '0',
+      PINNERY_ADMIN_EMAIL: 'admin@example.com',
+      PINNERY_PASSWORD: 'initial-pass-1',
+    };
+    const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => child.kill('SIGKILL'));
+    let out = '';
+    child.stderr.on('data', (d) => { out += d; });
+    const code = await new Promise((resolve) => child.once('exit', resolve));
+    assert.equal(code, 1);
+    assert.match(out, /schema version 9999.*refusing to start/);
   });
 });
 
