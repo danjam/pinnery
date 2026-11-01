@@ -24,7 +24,8 @@ The extension isn't versioned separately: the server fingerprints `extension/` a
 - Originals are content-addressed by SHA-256 and shared across pins and users; deletes are refcounted.
 - Server-side URL fetches go through the SSRF guard in `src/fetch.js`.
 - Extension and share-target saves upload first to `/api/pick/*`, where the image is parked in memory (`src/pending.js`). The server-hosted `/pick/<token>` page then chooses the board; its token is the page's only credential.
-- Mail is optional. Every emailed link needs a copy-the-link fallback.
+- Mail is optional. Every emailed link needs a copy-the-link fallback. Links emailed to someone who isn't signed in (forgot password) must use `PINNERY_PUBLIC_URL`, never the request's Host header.
+- Redirects to a `?next=` path go through `safeNext` (`src/auth.js`) or `js/next.js` in pages; never redirect to it raw.
 - Frontend is vanilla ES modules with no framework. Reuse `js/ui.js` (`el()`, dialogs, toasts), `js/icons.js` (MDI paths copied from `@mdi/js`) and the `css/app.css` tokens.
 - The CSP (`src/server.js`) only allows scripts from our own files: no inline `<script>` blocks or `on…=` attributes in pages. Put a page's script in `public/js/<page>.js`, and load `js/boot.js` first in `<head>` for the theme. `test/headers.test.js` fails on inline scripts.
 
