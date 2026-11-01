@@ -33,7 +33,7 @@ describe('boards and access scoping', () => {
       assert.equal(v.body.added, true);
       assert.equal(v.body.role, 'viewer');
       assert.equal(v.body.user_id, ids.viewer);
-      assert.equal(v.body.email, 'viewer@example.com');
+      assert.equal(v.body.email, 'v***@example.com'); // masked for a non-admin owner
       const e = await owner.json(sharePath('editor'), { method: 'PUT', json: { role: 'editor' } });
       assert.equal(e.body.added, true);
       const again = await owner.json(sharePath('viewer'), { method: 'PUT', json: { role: 'viewer' } });
@@ -75,10 +75,14 @@ describe('boards and access scoping', () => {
       assert.deepEqual(emails, ['editor@example.com', 'other@example.com', 'owner@example.com', 'viewer@example.com']);
     });
 
-    it('keeps full emails in the owner\'s share list', async () => {
+    it('masks emails in a non-admin owner\'s share list, not an admin\'s', async () => {
       const shares = (await owner.get(`/api/boards/${board.id}/shares`)).body;
-      assert.ok(shares.length);
-      for (const s of shares) assert.match(s.email, /^[a-z]+@example\.com$/);
+      assert.deepEqual(shares.map((s: { email: string }) => s.email).sort(), ['e***@example.com', 'v***@example.com']);
+      const admin = await server.adminClient();
+      const own = (await admin.post('/api/boards', { name: 'Admin board' })).body;
+      const put = await admin.json(`/api/boards/${own.id}/shares/${ids.viewer}`, { method: 'PUT', json: { role: 'viewer' } });
+      assert.equal(put.body.email, 'viewer@example.com');
+      assert.deepEqual((await admin.get(`/api/boards/${own.id}/shares`)).body.map((s: { email: string }) => s.email), ['viewer@example.com']);
     });
 
     it('is open to non-admins, closed to anonymous', async () => {
