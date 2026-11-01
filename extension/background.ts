@@ -1,11 +1,25 @@
-// Service worker: owns the context menu, runs the fetch chain (lib/pin.js) to hand the image to
+// Service worker: owns the context menu, runs the fetch chain (lib/pin.ts) to hand the image to
 // the server, then opens the server's board picker (/pick/<token>) in a popup window. The picker
 // is a normal web page, so picker changes ship with the server and never need a reinstall. The
 // page reports the outcome by navigating to /pick/<token>/done or /cancelled; we watch the popup's
 // URL for that, close it and show the in-page toast on the page the click came from.
 
-import { getConfig, api } from './lib/api.js';
-import { createPick } from './lib/pin.js';
+import { getConfig, api, ApiError } from './lib/api.ts';
+import type { Config } from './lib/api.ts';
+import { createPick } from './lib/pin.ts';
+import type { Job } from './lib/pin.ts';
+import type { ResolveMessage, ResolveReply, ToastMessage, WorkerMessage } from './lib/messages.ts';
+
+type IdTab = chrome.tabs.Tab & { id: number };
+const hasId = (tab: chrome.tabs.Tab | undefined): tab is IdTab => tab?.id !== undefined;
+
+// What the worker remembers about an open picker popup (in storage.session, keyed by window id).
+interface PickState {
+  token: string;
+  server: string;
+  tabId: number;
+  done: boolean;
+}
 
 const MENU_ID = 'pinnery-pin';
 const PICKER_W = 420;
@@ -19,15 +33,17 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === MENU_ID && tab) handleClick(info, tab).catch((e) => console.error('[pinnery]', e));
+  if (info.menuItemId === MENU_ID && hasId(tab)) {
+    handleClick(info, tab).catch((e) => console.error('[pinnery]', e));
+  }
 });
 
 // Ask the content script in the clicked frame for the image it saw under the pointer. Pages that
 // were open before the extension was installed have no content script yet: inject it and retry
 // (it won't know the clicked element then, but can still fetch and show toasts).
-async function resolve(tab, info) {
+async function resolve(tab: IdTab, info: chrome.contextMenus.OnClickData): Promise<ResolveReply | null> {
   const frameId = info.frameId || 0;
-  const msg = { type: 'resolve', srcUrl: info.srcUrl };
+  const msg: ResolveMessage = { type: 'resolve', srcUrl: info.srcUrl };
   try {
     return await chrome.tabs.sendMessage(tab.id, msg, { frameId });
   } catch {
@@ -41,9 +57,10 @@ async function resolve(tab, info) {
 }
 
 // Show a toast on the page the click came from; a system notification if there's no content script.
-async function toast(tabId, text, ok, url) {
+async function toast(tabId: number, text: string, ok: boolean, url?: string | null) {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: 'toast', text, ok, url }, { frameId: 0 });
+    const msg: ToastMessage = { type: 'toast', text, ok, url };
+    await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 });
   } catch {
     chrome.notifications.create({ type: 'basic', iconUrl: 'icons/icon128.png', title: 'Pinnery', message: text }).catch?.(() => {});
   }
@@ -56,12 +73,12 @@ function keepAlive() {
   return () => clearInterval(timer);
 }
 
-async function handleClick(info, tab) {
+async function handleClick(info: chrome.contextMenus.OnClickData, tab: IdTab) {
   const cfg = await getConfig();
   if (!cfg) return chrome.runtime.openOptionsPage();
   const resolved = await resolve(tab, info);
-  const candidates = [...new Set([...(resolved?.candidates || []), info.srcUrl].filter(Boolean))];
-  const job = {
+  const candidates = [...new Set([...(resolved?.candidates || []), info.srcUrl].filter((u): u is string => !!u))];
+  const job: Job = {
     tabId: tab.id,
     frameId: info.frameId || 0,
     candidates,
@@ -74,8 +91,8 @@ async function handleClick(info, tab) {
   try {
     result = await createPick(cfg, job);
   } catch (e) {
-    if (e.kind === 'unauthorised') chrome.runtime.openOptionsPage();
-    return toast(tab.id, e.message, false);
+    if (e instanceof ApiError && e.kind === 'unauthorised') chrome.runtime.openOptionsPage();
+    return toast(tab.id, (e as Error).message, false);
   } finally {
     release();
   }
@@ -85,14 +102,15 @@ async function handleClick(info, tab) {
 
 // One picker at a time, centred over the window the click came from. The popup is remembered in
 // storage.session (keyed by its window id) so a restarted worker can still recognise it.
-async function openPicker(cfg, job, token, windowId) {
-  const { pickerWindowId } = await chrome.storage.session.get('pickerWindowId');
+async function openPicker(cfg: Config, job: Job, token: string, windowId: number) {
+  const { pickerWindowId }: { pickerWindowId?: number } = await chrome.storage.session.get('pickerWindowId');
   if (pickerWindowId) await chrome.windows.remove(pickerWindowId).catch(() => {});
-  let left, top;
+  let left: number | undefined;
+  let top: number | undefined;
   try {
     const win = await chrome.windows.get(windowId);
-    left = Math.max(0, Math.round(win.left + (win.width - PICKER_W) / 2));
-    top = Math.max(0, Math.round(win.top + (win.height - PICKER_H) / 2));
+    left = Math.max(0, Math.round((win.left ?? 0) + ((win.width ?? PICKER_W) - PICKER_W) / 2));
+    top = Math.max(0, Math.round((win.top ?? 0) + ((win.height ?? PICKER_H) - PICKER_H) / 2));
   } catch {}
   const popup = await chrome.windows.create({
     url: `${cfg.server}/pick/${token}`,
@@ -103,14 +121,14 @@ async function openPicker(cfg, job, token, windowId) {
     top,
     focused: true,
   });
-  await chrome.storage.session.set({
-    pickerWindowId: popup.id,
-    [pickKey(popup.id)]: { token, server: cfg.server, tabId: job.tabId, done: false },
-  });
+  if (popup?.id === undefined) return;
+  const state: PickState = { token, server: cfg.server, tabId: job.tabId, done: false };
+  await chrome.storage.session.set({ pickerWindowId: popup.id, [pickKey(popup.id)]: state });
 }
 
-const pickKey = (windowId) => `pick:${windowId}`;
-const getPick = async (windowId) => (await chrome.storage.session.get(pickKey(windowId)))[pickKey(windowId)] || null;
+const pickKey = (windowId: number) => `pick:${windowId}`;
+const getPick = async (windowId: number): Promise<PickState | null> =>
+  ((await chrome.storage.session.get(pickKey(windowId)))[pickKey(windowId)] as PickState | undefined) || null;
 
 // The picker page reports its outcome in the URL. Only navigations within our server count.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -136,14 +154,14 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   const pick = await getPick(windowId);
   if (!pick) return;
   await chrome.storage.session.remove(pickKey(windowId));
-  const { pickerWindowId } = await chrome.storage.session.get('pickerWindowId');
+  const { pickerWindowId }: { pickerWindowId?: number } = await chrome.storage.session.get('pickerWindowId');
   if (pickerWindowId === windowId) await chrome.storage.session.remove('pickerWindowId');
   if (!pick.done) api.discardPick(pick.server, pick.token).catch(() => {});
 });
 
 // The in-page toast asks us to open the board it pinned to: a focused tab right after the page's
 // own tab (not at the end of the strip), owned by that tab so closing it returns there.
-chrome.runtime.onMessage.addListener((msg, sender) => {
+chrome.runtime.onMessage.addListener((msg: WorkerMessage | null | undefined, sender) => {
   if (msg?.type !== 'open' || !sender.tab || !/^https?:/i.test(msg.url || '')) return;
   chrome.tabs.create({
     url: msg.url,
@@ -155,4 +173,4 @@ chrome.runtime.onMessage.addListener((msg, sender) => {
 });
 
 // Exposed so the flow can be driven without a real right-click (tests).
-self.handleClick = handleClick;
+Object.assign(self, { handleClick });

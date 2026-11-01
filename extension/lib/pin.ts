@@ -9,14 +9,33 @@
 // waiting for the board chosen on the server's picker page. The result
 // records which step worked (`step`) so we can see how often each is needed.
 
-import { api } from './api.js';
+import { api, ApiError } from './api.ts';
+import type { Config, Pick } from './api.ts';
+import type { FetchMessage, PageFetchReply } from './messages.ts';
+
+// What the worker knows about the click: the tab/frame to talk to and the URLs to try, best first.
+export interface Job {
+  tabId: number;
+  frameId: number;
+  candidates: string[];
+  pageUrl: string;
+  pageTitle: string;
+}
+
+export interface PickResult extends Pick {
+  step: 1 | 2 | 3;
+  url: string;
+  attempts: string[];
+}
+
+type Fetched = { ok: true; blob: Blob } | { ok: false; error: string };
 
 const FETCH_TIMEOUT = 20000;
-const log = (...a) => console.log('[pinnery]', ...a);
+const log = (...a: unknown[]) => console.log('[pinnery]', ...a);
 
 // Reject obvious non-images without trusting content-type alone: hotlink protection likes to
 // answer 200 with an HTML page.
-async function looksLikeImage(blob) {
+async function looksLikeImage(blob: Blob): Promise<boolean> {
   const type = (blob.type || '').split(';')[0].trim().toLowerCase();
   if (/^(text\/|application\/(json|xml|xhtml))/.test(type)) return false;
   const head = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
@@ -28,7 +47,7 @@ async function looksLikeImage(blob) {
 let nextRuleId = 1 + Math.floor(Math.random() * 1e6);
 
 // Step 1. The rule is scoped to this host and removed straight after.
-async function extensionFetch(url, pageUrl) {
+async function extensionFetch(url: string, pageUrl: string): Promise<Fetched> {
   const isHttp = /^https?:/i.test(url);
   const ruleId = nextRuleId++;
   if (isHttp && pageUrl) {
@@ -49,22 +68,24 @@ async function extensionFetch(url, pageUrl) {
     if (!(await looksLikeImage(blob))) return { ok: false, error: `not an image (${blob.type || 'no type'})` };
     return { ok: true, blob };
   } catch (e) {
-    return { ok: false, error: e.name === 'TimeoutError' ? 'timed out' : e.message };
+    const err = e as Error; // fetch rejects with a TypeError or the timeout's DOMException
+    return { ok: false, error: err.name === 'TimeoutError' ? 'timed out' : err.message };
   } finally {
     if (isHttp && pageUrl) await chrome.declarativeNetRequest.updateSessionRules({ removeRuleIds: [ruleId] }).catch(() => {});
   }
 }
 
 // Step 2. The content script returns a data: URL (messages are JSON).
-async function pageFetch(job, url) {
-  let r;
+async function pageFetch(job: Job, url: string): Promise<Fetched> {
+  let r: PageFetchReply | undefined;
   try {
-    r = await chrome.tabs.sendMessage(job.tabId, { type: 'fetch', url }, { frameId: job.frameId });
+    const msg: FetchMessage = { type: 'fetch', url };
+    r = await chrome.tabs.sendMessage(job.tabId, msg, { frameId: job.frameId });
   } catch (e) {
-    return { ok: false, error: `no content script (${e.message})` };
+    return { ok: false, error: `no content script (${(e as Error).message})` };
   }
   if (!r) return { ok: false, error: 'no reply from page' };
-  if (!r.ok) return r;
+  if (!r.ok) return { ok: false, error: r.error };
   const blob = await (await fetch(r.dataUrl)).blob();
   if (!(await looksLikeImage(blob))) return { ok: false, error: `not an image (${blob.type || 'no type'})` };
   return { ok: true, blob };
@@ -73,9 +94,9 @@ async function pageFetch(job, url) {
 // Run the chain and park the image on the server. Resolves with { token, step, url,
 // attempts }; `token` is the pick token the picker page is opened with. Throws an ApiError / Error
 // with a message fit to show.
-export async function createPick(cfg, job) {
+export async function createPick(cfg: Config, job: Job): Promise<PickResult> {
   const meta = { sourceUrl: job.pageUrl, pageTitle: job.pageTitle };
-  const attempts = [];
+  const attempts: string[] = [];
 
   for (const url of job.candidates) {
     const r1 = await extensionFetch(url, job.pageUrl);
@@ -86,21 +107,21 @@ export async function createPick(cfg, job) {
     attempts.push(`2 ${url}: ${r2.error}`);
   }
 
-  let lastError;
+  let lastError: unknown;
   for (const url of job.candidates) {
     if (!/^https?:/i.test(url)) continue;
     try {
       return done(3, url, await api.pickUrl(cfg, url, meta));
     } catch (e) {
-      attempts.push(`3 ${url}: ${e.message}`);
+      attempts.push(`3 ${url}: ${(e as Error).message}`);
       lastError = e;
-      if (e.kind === 'unauthorised' || e.kind === 'unreachable') break;
+      if (e instanceof ApiError && (e.kind === 'unauthorised' || e.kind === 'unreachable')) break;
     }
   }
   log('all steps failed', attempts);
   throw lastError || new Error("Couldn't fetch the image");
 
-  function done(step, url, pick) {
+  function done(step: PickResult['step'], url: string, pick: Pick): PickResult {
     log(`parked via step ${step}`, url, attempts.length ? { failed: attempts } : '');
     return { ...pick, step, url, attempts };
   }
