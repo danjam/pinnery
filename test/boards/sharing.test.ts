@@ -60,13 +60,25 @@ describe('boards and access scoping', () => {
   });
 
   describe('users directory', () => {
-    it('lists everyone but the caller, minimal fields', async () => {
+    it('lists everyone but the caller, minimal fields, emails masked for non-admins', async () => {
       const { status, body } = await owner.get('/api/users/directory');
       assert.equal(status, 200);
       const emails = body.map((u: { email: string }) => u.email).sort();
-      assert.deepEqual(emails, ['admin@example.com', 'editor@example.com', 'other@example.com', 'viewer@example.com']);
+      assert.deepEqual(emails, ['a***@example.com', 'e***@example.com', 'o***@example.com', 'v***@example.com']);
       for (const u of body) assert.deepEqual(Object.keys(u).sort(), ['display_name', 'email', 'id']);
       assert.ok(!body.some((u: { id: number }) => u.id === ids.owner));
+    });
+
+    it('shows admins full emails', async () => {
+      const { body } = await (await server.adminClient()).get('/api/users/directory');
+      const emails = body.map((u: { email: string }) => u.email).sort();
+      assert.deepEqual(emails, ['editor@example.com', 'other@example.com', 'owner@example.com', 'viewer@example.com']);
+    });
+
+    it('keeps full emails in the owner\'s share list', async () => {
+      const shares = (await owner.get(`/api/boards/${board.id}/shares`)).body;
+      assert.ok(shares.length);
+      for (const s of shares) assert.match(s.email, /^[a-z]+@example\.com$/);
     });
 
     it('is open to non-admins, closed to anonymous', async () => {

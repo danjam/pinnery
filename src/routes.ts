@@ -197,7 +197,8 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     ON CONFLICT(board_id, user_id) DO UPDATE SET role = excluded.role`);
   const dropShare = db.prepare<[number, number]>('DELETE FROM board_shares WHERE board_id = ? AND user_id = ?');
   const getUser = db.prepare<[number], Person>('SELECT id, display_name, email FROM users WHERE id = ?');
-  // Everyone else, for the share picker: the least that tells people apart ("Name · email").
+  // Everyone else, for the share picker: the least that tells people apart ("Name · email"; the
+  // email is masked for non-admins, see below).
   const directory = db.prepare<[number], Person>('SELECT id, display_name, email FROM users WHERE id != ? ORDER BY display_name COLLATE NOCASE, id');
 
   const ownedBoard = (req: Request) => {
@@ -207,7 +208,17 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return board;
   };
 
-  api.get('/users/directory', (req, res) => res.json(directory.all(req.user.id)));
+  // Non-admins see a masked email (d***@example.com): enough to tell apart two people with the same
+  // name, without handing everyone the full list of addresses. Admins see them in full anyway.
+  const maskEmail = (email: string) => {
+    const at = email.lastIndexOf('@');
+    return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
+  };
+
+  api.get('/users/directory', (req, res) => {
+    const people = directory.all(req.user.id);
+    res.json(req.user.is_admin ? people : people.map((p) => ({ ...p, email: maskEmail(p.email) })));
+  });
 
   api.get('/boards/:id/shares', (req, res) => res.json(listShares.all(ownedBoard(req).id)));
 
