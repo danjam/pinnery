@@ -1,9 +1,10 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
 describe('page routes and ?next', () => {
-  let server, frank;
+  let server: Server, frank: Client;
   before(async () => {
     server = await startServer();
     frank = await server.createUser('frank@example.com', 'frank-password-1');
@@ -29,7 +30,7 @@ describe('page routes and ?next', () => {
   it('serves the login page when signed out', async () => {
     const r = await server.anon().fetch('/login');
     assert.equal(r.status, 200);
-    assert.match(r.headers.get('content-type'), /html/);
+    assert.match(r.headers.get('content-type') ?? '', /html/);
   });
 
   it('/login redirects signed-in users to next or home', async () => {

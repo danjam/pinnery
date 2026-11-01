@@ -1,9 +1,10 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 
 describe('first-login password change gate', () => {
-  let server;
+  let server: MailServer;
   before(async () => { server = await startServer({ mail: true }); });
   after(() => server.stop());
 
@@ -53,7 +54,7 @@ describe('first-login password change gate', () => {
 });
 
 describe('voluntary password change', () => {
-  let server, bob, other, token;
+  let server: MailServer, bob: Client, other: Client, token: string;
   before(async () => {
     server = await startServer({ mail: true });
     bob = await server.createUser('bob@example.com', 'bob-password-1');

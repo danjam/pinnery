@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 import { pngBuffer } from '../helpers/images.ts';
-import { newBoard, originalFile, upload } from '../helpers/pins.ts';
+import { newBoard, originalFile, upload, type BoardRef } from '../helpers/pins.ts';
 
 describe('pins', () => {
-  let server, alice, bob, board;
+  let server: Server, alice: Client, bob: Client, board: BoardRef;
   before(async () => {
     server = await startServer();
     alice = await server.createUser('alice@example.com', 'alice-password-1');

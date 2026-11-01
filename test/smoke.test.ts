@@ -2,11 +2,12 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { startServer } from './helpers/server.ts';
+import type { MailServer, Server } from './helpers/server.ts';
 import { linkFrom, tokenFromLink } from './helpers/mail.ts';
 import { jpegBuffer, pngBuffer } from './helpers/images.ts';
 
 describe('harness (mail off)', () => {
-  let server;
+  let server: Server;
   before(async () => { server = await startServer(); });
   after(() => server.stop());
 
@@ -67,7 +68,7 @@ describe('harness (mail off)', () => {
 });
 
 describe('harness (mail on)', () => {
-  let server;
+  let server: MailServer;
   before(async () => { server = await startServer({ mail: true }); });
   after(() => server.stop());
 

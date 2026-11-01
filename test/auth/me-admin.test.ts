@@ -1,9 +1,10 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
 describe('/api/me and admin-only routes', () => {
-  let server, erin, admin;
+  let server: Server, erin: Client, admin: Client;
   before(async () => {
     server = await startServer();
     admin = await server.adminClient();

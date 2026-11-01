@@ -1,11 +1,12 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 import { linkFrom, tokenFromLink } from '../helpers/mail.ts';
 import { BAD_TOKEN, expireLink, userByEmail } from '../helpers/accounts.ts';
 
 describe('accounts (mail on)', () => {
-  let server, admin;
+  let server: MailServer, admin: Client;
   before(async () => {
     server = await startServer({ mail: true });
     admin = await server.adminClient();
@@ -13,7 +14,7 @@ describe('accounts (mail on)', () => {
   after(() => server.stop());
 
   describe('forgot and reset password', () => {
-    let alice, aliceOther;
+    let alice: Client, aliceOther: Client;
     before(async () => {
       alice = await server.createUser('alice@example.com', 'alice-pass-1');
       aliceOther = await server.login('alice@example.com', 'alice-pass-1', { ip: '127.0.0.30' });
@@ -95,7 +96,7 @@ describe('accounts (mail on)', () => {
       const anon = server.anon({ ip: '127.0.0.36' });
       assert.equal((await anon.get(`/api/reset/${BAD_TOKEN}`)).status, 404);
       const u = await admin.get('/api/users');
-      const target = u.body.find((x) => x.email === 'alice@example.com');
+      const target = u.body.find((x: { email: string }) => x.email === 'alice@example.com');
       const { body } = await admin.post(`/api/users/${target.id}/reset`);
       expireLink(server, body.link);
       assert.equal((await anon.get(`/api/reset/${tokenFromLink(body.link)}`)).status, 410);

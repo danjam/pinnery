@@ -1,13 +1,14 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 import { pngBuffer } from '../helpers/images.ts';
-import { newBoard, rawPost } from '../helpers/pins.ts';
+import { newBoard, rawPost, type BoardRef } from '../helpers/pins.ts';
 
-const tok = (pick) => pick.token;
+const tok = (pick: { token: string }) => pick.token;
 
 describe('picks', () => {
-  let server, alice, bob, boardA;
+  let server: Server, alice: Client, bob: Client, boardA: BoardRef;
   before(async () => {
     server = await startServer();
     alice = await server.createUser('alice@example.com', 'alice-password-1');
@@ -16,7 +17,7 @@ describe('picks', () => {
   });
   after(() => server.stop());
 
-  const park = async (client, color) => (await rawPost(client, '/api/pick/upload?source_url=https%3A%2F%2Fexample.com%2Fx&page_title=Parked', await pngBuffer({ width: 50, height: 50, color }))).body;
+  const park = async (client: Client, color: string) => (await rawPost(client, '/api/pick/upload?source_url=https%3A%2F%2Fexample.com%2Fx&page_title=Parked', await pngBuffer({ width: 50, height: 50, color }))).body;
 
   it('parks an upload, lets the token alone pick a board and create the pin', async () => {
     const buf = await pngBuffer({ width: 50, height: 25, color: '#0a0b0c' });
@@ -28,14 +29,14 @@ describe('picks', () => {
     const anon = server.anon();
     const page = await anon.fetch(`/pick/${t}`);
     assert.equal(page.status, 200);
-    assert.match(page.headers.get('content-type'), /html/);
+    assert.match(page.headers.get('content-type') ?? '', /html/);
     assert.equal(page.headers.get('cache-control'), 'no-store');
 
     const info = (await anon.get(`/pick/${t}/info`)).body;
     assert.equal(info.item.width, 50);
     assert.equal(info.item.mime, 'image/png');
     assert.equal(info.item.page_title, 'Parked');
-    assert.deepEqual(info.boards.map((b) => b.name), ['Pick target']);
+    assert.deepEqual(info.boards.map((b: { name: string }) => b.name), ['Pick target']);
     assert.equal((await anon.fetch(`/pick/${t}/preview`)).headers.get('content-type'), 'image/webp');
 
     // Creating a board from the picker works, and shows up in the list.
@@ -73,7 +74,7 @@ describe('picks', () => {
     assert.equal((await anon.post(`/pick/${t}/commit`, {})).status, 404);
     assert.equal((await anon.get(`/pick/${t}/info`)).status, 200);
     // and bob's picker doesn't list alice's boards
-    assert.ok(!(await anon.get(`/pick/${t}/boards`)).body.some((b) => b.name === 'Pick target'));
+    assert.ok(!(await anon.get(`/pick/${t}/boards`)).body.some((b: { name: string }) => b.name === 'Pick target'));
   });
 
   it('discard consumes the token without creating a pin', async () => {

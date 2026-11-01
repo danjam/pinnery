@@ -2,9 +2,11 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pngBuffer } from '../helpers/images.ts';
 import { setupBoards, upload } from '../helpers/boards.ts';
+import type { Boards } from '../helpers/boards.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
-let server;
-let owner, editor, viewer, other, ids, board, pin, sharePath;
+let server: Server;
+let owner: Client, editor: Client, viewer: Client, other: Client, ids: Boards['ids'], board: Boards['board'], pin: Boards['pin'], sharePath: Boards['sharePath'];
 
 describe('boards and access scoping', () => {
   before(async () => {
@@ -20,10 +22,10 @@ describe('boards and access scoping', () => {
       assert.equal((await viewer.get(`/api/pins/${pin.id}`)).status, 404);
       assert.equal((await viewer.fetch(`/i/${pin.sha256}`)).status, 404);
       assert.equal((await viewer.fetch(`/t/400/${pin.sha256}`)).status, 404);
-      assert.ok(!(await viewer.get('/api/boards')).body.some((b) => b.id === board.id));
+      assert.ok(!(await viewer.get('/api/boards')).body.some((b: { id: number }) => b.id === board.id));
       assert.equal((await owner.del(sharePath('viewer'))).status, 404); // already gone
       const left = (await owner.get(`/api/boards/${board.id}/shares`)).body;
-      assert.deepEqual(left.map((s) => s.user_id), [ids.editor]);
+      assert.deepEqual(left.map((s: { user_id: number }) => s.user_id), [ids.editor]);
     });
 
     it('a removed editor can no longer add pins', async () => {
@@ -45,7 +47,7 @@ describe('boards and access scoping', () => {
       assert.equal((await owner.fetch(`/i/${p.sha256}`)).status, 404);
       assert.equal((await viewer.get(`/api/boards/${b.id}/pins`)).status, 404);
       assert.equal((await viewer.fetch(`/i/${p.sha256}`)).status, 404);
-      assert.ok(!(await viewer.get('/api/boards')).body.some((x) => x.id === b.id));
+      assert.ok(!(await viewer.get('/api/boards')).body.some((x: { id: number }) => x.id === b.id));
     });
 
     it('with move_to re-homes the pins instead', async () => {

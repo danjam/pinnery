@@ -1,9 +1,11 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { setupBoards } from '../helpers/boards.ts';
+import type { Boards } from '../helpers/boards.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
-let server;
-let owner, board, pin;
+let server: Server;
+let owner: Client, board: Boards['board'], pin: Boards['pin'];
 
 describe('boards and access scoping', () => {
   before(async () => {
@@ -20,7 +22,7 @@ describe('boards and access scoping', () => {
       assert.equal(created.body.pin_count, 0);
 
       const list = await owner.get('/api/boards');
-      assert.ok(list.body.some((b) => b.id === created.body.id));
+      assert.ok(list.body.some((b: { id: number }) => b.id === created.body.id));
 
       const renamed = await owner.patch(`/api/boards/${created.body.id}`, { name: 'Renamed' });
       assert.equal(renamed.status, 200);
@@ -28,7 +30,7 @@ describe('boards and access scoping', () => {
 
       assert.equal((await owner.del(`/api/boards/${created.body.id}`)).status, 200);
       assert.equal((await owner.get(`/api/boards/${created.body.id}/pins`)).status, 404);
-      assert.ok(!(await owner.get('/api/boards')).body.some((b) => b.id === created.body.id));
+      assert.ok(!(await owner.get('/api/boards')).body.some((b: { id: number }) => b.id === created.body.id));
     });
 
     it('validates names', async () => {
@@ -41,7 +43,7 @@ describe('boards and access scoping', () => {
       const { status, body } = await owner.get(`/api/boards/${board.id}/pins`);
       assert.equal(status, 200);
       assert.equal(body.board.role, 'owner');
-      assert.deepEqual(body.pins.map((p) => p.id), [pin.id]);
+      assert.deepEqual(body.pins.map((p: { id: number }) => p.id), [pin.id]);
       const set = await owner.patch(`/api/boards/${board.id}`, { cover_pin_id: pin.id });
       assert.equal(set.body.cover_pin_id, pin.id);
       const cleared = await owner.patch(`/api/boards/${board.id}`, { cover_pin_id: null });

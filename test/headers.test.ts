@@ -4,11 +4,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './helpers/server.ts';
+import type { Server } from './helpers/server.ts';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'public');
 
 describe('security headers', () => {
-  let server;
+  let server: Server;
   before(async () => { server = await startServer(); });
   after(() => server.stop());
 
@@ -16,8 +17,8 @@ describe('security headers', () => {
     it(`are sent on ${p}`, async () => {
       const res = await server.anon().fetch(p);
       const csp = res.headers.get('content-security-policy');
-      assert.match(csp, /script-src 'self'(;|$)/);
-      assert.match(csp, /frame-ancestors 'none'/);
+      assert.match(csp ?? '', /script-src 'self'(;|$)/);
+      assert.match(csp ?? '', /frame-ancestors 'none'/);
       assert.equal(res.headers.get('x-frame-options'), 'DENY');
       assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
     });

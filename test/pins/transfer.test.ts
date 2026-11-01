@@ -1,24 +1,31 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
-import { newBoard, upload } from '../helpers/pins.ts';
+import { newBoard, upload, type BoardRef } from '../helpers/pins.ts';
 import { createZipWriter } from '../../src/zip.ts';
 
 // Build a zip in memory with the app's own writer.
-async function makeZip(entries) {
-  const chunks = [];
-  const sink = { write: (b) => { chunks.push(Buffer.from(b)); return true; }, on() {}, off() {} };
+async function makeZip(entries: [string, string | Buffer][]) {
+  const chunks: Buffer[] = [];
+  const sink = { write: (b: Uint8Array) => { chunks.push(Buffer.from(b)); return true; }, on() {}, off() {} };
   const z = createZipWriter(sink);
   for (const [name, data] of entries) await z.add(name, Buffer.from(data));
   await z.end();
   return Buffer.concat(chunks);
 }
-const manifest = (boards) => JSON.stringify({ version: 1, exported_at: new Date().toISOString(), boards });
+const manifest = (boards: unknown[]) => JSON.stringify({ version: 1, exported_at: new Date().toISOString(), boards });
+
+// The pins the fixtures upload, as the API reports them.
+interface PinRef {
+  id: number;
+  sha256: string;
+}
 
 describe('export and import', () => {
-  let server, alice, bob, carol;
-  const pinned = {};
+  let server: Server, alice: Client, bob: Client, carol: Client;
+  let pinned: { cats: BoardRef; empty: BoardRef; red: PinRef; green: PinRef };
   before(async () => {
     server = await startServer();
     alice = await server.createUser('alice@example.com', 'alice-password-1');
@@ -27,25 +34,24 @@ describe('export and import', () => {
 
     const cats = await newBoard(alice, 'Cats / Dogs');
     const empty = await newBoard(alice, 'Empty');
-    pinned.cats = cats;
-    pinned.red = (await upload(alice, cats.id, await pngBuffer({ color: '#ff0000' }), '&name=Red&source_url=https%3A%2F%2Fexample.com%2Fred')).body;
-    pinned.green = (await upload(alice, cats.id, await jpegBuffer({ color: '#00ff00' }), '&name=Green')).body;
-    await alice.patch(`/api/boards/${cats.id}`, { cover_pin_id: pinned.green.id });
-    pinned.empty = empty;
+    const red: PinRef = (await upload(alice, cats.id, await pngBuffer({ color: '#ff0000' }), '&name=Red&source_url=https%3A%2F%2Fexample.com%2Fred')).body;
+    const green: PinRef = (await upload(alice, cats.id, await jpegBuffer({ color: '#00ff00' }), '&name=Green')).body;
+    await alice.patch(`/api/boards/${cats.id}`, { cover_pin_id: green.id });
+    pinned = { cats, empty, red, green };
   });
   after(() => server.stop());
 
-  const exportZip = async (client, query = '') => {
+  const exportZip = async (client: Client, query = '') => {
     const res = await client.fetch(`/api/export${query}`);
     return { res, buf: Buffer.from(await res.arrayBuffer()) };
   };
-  const importZip = (client, buf) => client.json('/api/import', { method: 'POST', body: buf, headers: { 'content-type': 'application/zip' } });
+  const importZip = (client: Client, buf: Buffer) => client.json('/api/import', { method: 'POST', body: buf, headers: { 'content-type': 'application/zip' } });
 
   it('exports a zip and imports it into another account, round-tripping everything', async () => {
     const { res, buf } = await exportZip(alice);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('content-type'), 'application/zip');
-    assert.match(res.headers.get('content-disposition'), /attachment; filename="pinnery-export-\d{4}-\d{2}-\d{2}\.zip"/);
+    assert.match(res.headers.get('content-disposition') ?? '', /attachment; filename="pinnery-export-\d{4}-\d{2}-\d{2}\.zip"/);
     assert.deepEqual([...buf.subarray(0, 2)], [0x50, 0x4b]);
     assert.ok(buf.includes(Buffer.from('pins.json')));
 
@@ -54,11 +60,11 @@ describe('export and import', () => {
     assert.deepEqual(imp.body, { boards_created: 2, boards_merged: 0, pins_added: 2, pins_skipped: 0 });
 
     const boards = (await bob.get('/api/boards')).body;
-    assert.deepEqual(boards.map((b) => b.name).sort(), ['Cats / Dogs', 'Empty']);
-    const cats = boards.find((b) => b.name === 'Cats / Dogs');
+    assert.deepEqual(boards.map((b: { name: string }) => b.name).sort(), ['Cats / Dogs', 'Empty']);
+    const cats = boards.find((b: { name: string }) => b.name === 'Cats / Dogs');
     assert.equal(cats.pin_count, 2);
     const { pins } = (await bob.get(`/api/boards/${cats.id}/pins?order=asc`)).body;
-    const red = pins.find((p) => p.sha256 === pinned.red.sha256);
+    const red = pins.find((p: { sha256: string }) => p.sha256 === pinned.red.sha256);
     assert.equal(red.page_title, 'Red');
     assert.equal(red.source_url, 'https://example.com/red');
     assert.equal(cats.cover.sha256, pinned.green.sha256, 'cover restored');
@@ -69,7 +75,7 @@ describe('export and import', () => {
     }
     // alice's data is untouched, bob's pins are his own rows
     assert.equal((await alice.get('/api/boards')).body.length, 2);
-    assert.ok(!pins.some((p) => p.id === pinned.red.id));
+    assert.ok(!pins.some((p: { id: number }) => p.id === pinned.red.id));
   });
 
   it('importing the same zip again adds nothing (merge by name)', async () => {
@@ -84,7 +90,7 @@ describe('export and import', () => {
   it('exports one board with ?board= and only your own', async () => {
     const { res, buf } = await exportZip(alice, `?board=${pinned.cats.id}`);
     assert.equal(res.status, 200);
-    assert.match(res.headers.get('content-disposition'), /pinnery-Cats _ Dogs-/);
+    assert.match(res.headers.get('content-disposition') ?? '', /pinnery-Cats _ Dogs-/);
     const imp = await importZip(await server.createUser('dave@example.com', 'dave-password-1'), buf);
     assert.equal(imp.body.boards_created, 1);
     assert.equal(imp.body.pins_added, 2);

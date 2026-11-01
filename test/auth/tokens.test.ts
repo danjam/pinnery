@@ -1,9 +1,10 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 
 describe('API tokens', () => {
-  let server, carol, dave;
+  let server: MailServer, carol: Client, dave: Client;
   before(async () => {
     server = await startServer({ mail: true });
     carol = await server.createUser('carol@example.com', 'carol-password-1');
@@ -18,7 +19,7 @@ describe('API tokens', () => {
     assert.equal(body.name, 'laptop');
     const list = await carol.get('/api/tokens');
     assert.equal(list.status, 200);
-    const row = list.body.find((t) => t.id === body.id);
+    const row = list.body.find((t: { id: number }) => t.id === body.id);
     assert.equal(row.name, 'laptop');
     assert.ok(!JSON.stringify(list.body).includes(body.token));
     assert.equal(row.current, false);
@@ -26,8 +27,8 @@ describe('API tokens', () => {
     assert.equal(viaToken.body.email, 'carol@example.com');
     // the token's own listing marks it as current
     const own = await server.bearer(body.token).get('/api/tokens');
-    assert.equal(own.body.find((t) => t.id === body.id).current, true);
-    assert.ok((await carol.get('/api/tokens')).body.find((t) => t.id === body.id).last_used_at);
+    assert.equal(own.body.find((t: { id: number }) => t.id === body.id).current, true);
+    assert.ok((await carol.get('/api/tokens')).body.find((t: { id: number }) => t.id === body.id).last_used_at);
   });
 
   it('requires a name and valid credentials', async () => {
@@ -41,7 +42,7 @@ describe('API tokens', () => {
     const t1 = await carol.mintToken('one');
     const t2 = await carol.mintToken('two');
     const list = (await carol.get('/api/tokens')).body;
-    const id1 = list.find((t) => t.name === 'one').id;
+    const id1 = list.find((t: { name: string }) => t.name === 'one').id;
     const r = await carol.del(`/api/tokens/${id1}`);
     assert.equal(r.status, 200);
     assert.equal((await server.bearer(t1).get('/api/me')).status, 401);
@@ -52,13 +53,13 @@ describe('API tokens', () => {
 
   it("cannot revoke another user's token, and sessions are not listed as tokens", async () => {
     const t = await dave.mintToken('dave-only');
-    const id = (await dave.get('/api/tokens')).body.find((x) => x.name === 'dave-only').id;
+    const id = (await dave.get('/api/tokens')).body.find((x: { name: string }) => x.name === 'dave-only').id;
     assert.equal((await carol.del(`/api/tokens/${id}`)).status, 404);
     assert.equal((await server.bearer(t).get('/api/me')).status, 200);
-    assert.ok(!(await carol.get('/api/tokens')).body.some((x) => x.id === id));
+    assert.ok(!(await carol.get('/api/tokens')).body.some((x: { id: number }) => x.id === id));
     // a browser session row is not revocable through the tokens route
     const { body: me } = await dave.get('/api/tokens');
-    assert.ok(me.every((x) => x.name));
+    assert.ok(me.every((x: { name: string }) => x.name));
   });
 
   it('revoke all removes every token of the caller, not other users\' or the session', async () => {
@@ -88,7 +89,8 @@ describe('API tokens', () => {
 
   it('bogus and malformed bearer values are 401', async () => {
     assert.equal((await server.bearer('pn_' + '0'.repeat(64)).get('/api/me')).status, 401);
-    assert.equal((await server.anon().get('/api/me', { headers: { authorization: 'Bearer ' } })).status, 401);
+    assert.equal((await server.anon().get('/api/me')).status, 401);
+    assert.equal((await server.anon().json('/api/me', { headers: { authorization: 'Bearer ' } })).status, 401);
     assert.equal((await server.anon().get('/api/tokens')).status, 401);
     assert.equal((await server.anon().del('/api/tokens')).status, 401);
   });

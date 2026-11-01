@@ -164,6 +164,9 @@ export interface Server {
   stop: () => Promise<void>;
 }
 
+/** A Server started with `mail: true`, so its sink is there. */
+export type MailServer = Server & { mail: MailSink };
+
 /**
  * Boot an isolated Pinnery.
  *
@@ -180,6 +183,8 @@ export interface Server {
  * - stop(): kill the server, wait for it to exit, delete the data dir and close the sink.
  *   Idempotent.
  */
+export async function startServer(opts: StartOpts & { mail: true }): Promise<MailServer>;
+export async function startServer(opts?: StartOpts): Promise<Server>;
 export async function startServer(opts: StartOpts = {}): Promise<Server> {
   // freePort() releases the port before the server binds it, so a test file running in parallel
   // can rarely grab it first. Then our server exits with EADDRINUSE: try again on a new port.

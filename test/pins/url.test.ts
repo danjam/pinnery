@@ -1,24 +1,30 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 import { pngBuffer } from '../helpers/images.ts';
 import { newBoard } from '../helpers/pins.ts';
 
 // A tiny upstream serving a PNG, a text file, a redirect and a 404.
-async function startUpstream(png) {
+interface Upstream {
+  port: number;
+  close: () => Promise<void>;
+}
+async function startUpstream(png: Buffer): Promise<Upstream> {
   const srv = http.createServer((req, res) => {
     if (req.url === '/img.png') res.writeHead(200, { 'content-type': 'image/png' }).end(png);
     else if (req.url === '/redirect') res.writeHead(302, { location: '/img.png' }).end();
     else if (req.url === '/text') res.writeHead(200, { 'content-type': 'text/plain' }).end('hello');
     else res.writeHead(404).end();
   });
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r));
-  return { port: srv.address().port, close: () => new Promise((r) => { srv.closeAllConnections(); srv.close(r); }) };
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  return { port: (srv.address() as AddressInfo).port, close: () => new Promise<void>((r) => { srv.closeAllConnections(); srv.close(() => r()); }) };
 }
 
 describe('pins by URL', () => {
-  let png, upstream, locked, open, lockedUser, openUser;
+  let png: Buffer, upstream: Upstream, locked: Server, open: Server, lockedUser: Client, openUser: Client;
   before(async () => {
     png = await pngBuffer({ width: 40, height: 30, color: '#808000' });
     upstream = await startUpstream(png);
