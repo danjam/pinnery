@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended"],
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
   "semanticCommits": "enabled",
   "packageRules": [
     {
@@ -11,6 +11,12 @@
     {
       "description": "Base images are pinned by digest and rebuilt upstream very often; batch those bumps weekly (each one is a release)",
       "matchManagers": ["dockerfile"],
+      "matchUpdateTypes": ["digest"],
+      "schedule": ["* 0-5 * * 1"]
+    },
+    {
+      "description": "Actions are pinned by commit SHA, and their major tags (v7) move with every release; batch those bumps weekly",
+      "matchManagers": ["github-actions"],
       "matchUpdateTypes": ["digest"],
       "schedule": ["* 0-5 * * 1"]
     },
