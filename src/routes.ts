@@ -463,7 +463,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       const boardId = toId(req.body?.board_id);
       const board = boardId && access.canEditBoard(req.pick.userId, boardId);
       if (!board) throw notFound('board');
-      const { buf, info, meta } = pending.take(req.params.token)!; // the check above just found it
+      const { buf, info, meta } = pending.take(req.params.token)!; // the scoped middleware's pending.get just found it
       await store.save(buf, info);
       res.status(201).json({ pin: insert(board.id, info, meta), board: { id: board.id, name: board.name } });
     });
