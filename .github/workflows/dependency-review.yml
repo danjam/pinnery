@@ -1,0 +1,26 @@
+name: Dependency review
+# Checks the dependencies a PR adds or changes (package-lock.json, so transitive ones and Renovate
+# bumps too, plus the actions in these workflows) against GitHub's advisory database and a licence
+# allow-list, and fails the PR on a known vulnerability or a licence that isn't on the list.
+# Scans of the published image (scan.yml) only happen after a release; this catches it before merge.
+#
+# The allow-list is what package-lock.json has today. LGPL-3.0-or-later is on it for sharp's prebuilt
+# libvips binaries (@img/sharp-libvips-*), since LGPL is fine to use from MIT code. Actions have no
+# licence data, so they're listed but never fail on licence.
+
+on:
+  pull_request:
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low
+          # The default is runtime only; dev dependencies run in CI and in the image build.
+          fail-on-scopes: runtime, development
+          allow-licenses: MIT, MIT-0, ISC, 0BSD, BSD-3-Clause, Apache-2.0, BlueOak-1.0.0, LGPL-3.0-or-later
