@@ -61,6 +61,11 @@ describe('cross-site writes', () => {
       headers: { 'sec-fetch-site': '', origin: 'https://other.example.com' },
     });
     assert.equal(form.status, 403);
+    // Routing ignores case and a trailing slash, so the check must too.
+    for (const path of ['/API/LOGIN', '/api/Login', '/api/login/']) {
+      const r = await anon.fetch(path, { method: 'POST', body: new URLSearchParams(creds), headers: { 'sec-fetch-site': 'cross-site' } });
+      assert.equal(r.status, 403, path);
+    }
     assert.equal(anon.cookie(), null);
     assert.equal((await alice.json('/api/logout', { method: 'POST', headers: { 'sec-fetch-site': 'cross-site' } })).status, 403);
     assert.equal((await alice.get('/api/me')).status, 200);
