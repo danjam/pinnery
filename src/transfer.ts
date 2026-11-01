@@ -19,8 +19,8 @@ import type { ZipEntry, ZipFile } from './zip.ts';
 // Boards are matched by name on import, so the folder names are only for people browsing the zip.
 
 const FORMAT_VERSION = 1;
-// The archive is spooled to disk, not memory; without zip64 the format itself tops out at 4 GiB.
-const IMPORT_MAX_BYTES = 4 * 1024 ** 3 - 1;
+// The archive is spooled to disk, not memory. Exports past 4 GiB are zip64, so imports go beyond it too.
+const IMPORT_MAX_BYTES = 64 * 1024 ** 3;
 const MANIFEST_MAX_BYTES = 32 * 1024 * 1024;
 
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
