@@ -9,3 +9,13 @@ After 10 wrong passwords from one address, Pinnery blocks that address for up to
 The same address is used for a general cap of 1000 requests a minute, far above normal use.
 
 Pinnery also uses the proxy's `X-Forwarded-Proto` header to tell when visitors are on HTTPS, so it can mark the sign-in cookie secure.
+
+## Behind a proxy, don't publish the port
+
+With `PINNERY_PROXIES` above `0`, Pinnery trusts the last entries of `X-Forwarded-For` because it expects only the proxy to reach it. If the port is also published (`3420:3420` in the compose file), anyone who can reach that port can skip the proxy, send their own `X-Forwarded-For`, and pick a new address for every guess: the sign-in limit no longer applies to them.
+
+So when a proxy is in front, make the proxy the only way in:
+
+- **Proxy in Docker:** remove the `ports:` lines and put Pinnery on the proxy's Docker network.
+- **Proxy on the same machine, outside Docker:** publish to localhost only, `127.0.0.1:3420:3420`.
+- **Proxy on another machine:** firewall the port so only the proxy can reach it. Docker-published ports skip `ufw`, so filter in the `DOCKER-USER` chain instead.

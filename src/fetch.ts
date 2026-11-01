@@ -88,6 +88,8 @@ export async function fetchImage(rawUrl: string, referer?: string): Promise<Buff
     const err = e instanceof Error ? e : new Error(String(e));
     if (isBlockedError(err)) throw new ImageError(400, `that URL is blocked: ${url.hostname} points to a private or reserved address`);
     if (err.name === 'AbortError' || ('code' in err && err.code === 'ABORT_ERR')) throw new ImageError(502, 'fetch timed out');
-    throw new ImageError(502, `fetch failed: ${err.message}`);
+    // The error text can name internal hosts and addresses (DNS, connect errors): log it, don't return it.
+    console.warn(`fetch: ${url.href}: ${err.message}`);
+    throw new ImageError(502, 'fetch failed');
   }
 }

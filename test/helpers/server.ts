@@ -101,6 +101,10 @@ function makeClient(base: string, { cookie = null, token = null, email = null, p
     if (token && !headers.has('authorization')) headers.set('authorization', `Bearer ${token}`);
     if (state.cookie && !headers.has('cookie')) headers.set('cookie', state.cookie);
     if (ip && !headers.has('x-forwarded-for')) headers.set('x-forwarded-for', ip);
+    // Act like a browser on our own pages, which say where a request came from (the CSRF check in
+    // server.ts refuses cookie writes that don't). An empty value means "send neither header".
+    if (!headers.has('sec-fetch-site') && !headers.has('origin')) headers.set('sec-fetch-site', 'same-origin');
+    else if (headers.get('sec-fetch-site') === '') headers.delete('sec-fetch-site');
     const { json: _json, ...rest } = init;
     const res = await fetch(new URL(p, base), { redirect: 'manual', ...rest, headers });
     // Follow the server's cookie changes (login sets it, logout clears it).

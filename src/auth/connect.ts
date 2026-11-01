@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { Core } from './core.ts';
-import { b64url, hex, linkBase, safeEqual, sha256 } from './util.ts';
+import { b64url, hex, safeEqual, sameOrigin, sha256 } from './util.ts';
 
 const CODE_TTL_MS = 60 * 1000;
 
@@ -63,17 +63,6 @@ export function createConnect({ exchangeFailures, changeRequired, identify, mint
     const code = hex(crypto.randomBytes(32));
     codes.set(code, { ...params, expires: now + CODE_TTL_MS });
     return code;
-  }
-
-  const ownOrigin = (req: Request) => linkBase(req);
-
-  // A state-changing request from our own pages only: the session cookie (SameSite=Lax already
-  // keeps it off cross-site POSTs) plus the browser's own word on where the request came from.
-  function sameOrigin(req: Request) {
-    const site = req.get('sec-fetch-site');
-    if (site) return site === 'same-origin';
-    const origin = req.get('origin');
-    return !!origin && origin === ownOrigin(req);
   }
 
   // POST /connect/decide — body: the connect params plus { allow }. Responds with where to go next.

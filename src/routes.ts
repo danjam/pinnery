@@ -27,6 +27,9 @@ const PIN_COLS = 'id, board_id, sha256, width, height, mime, animated, source_ur
 
 const PICK_TOKEN_RE = /^[0-9a-f]{32}$/;
 
+// Bulk delete/move: an explicit cap, well under SQLite's bound-variable limit (the ids go into IN (…)).
+const MAX_BULK_IDS = 1000;
+
 // A request under /pick/:token/…, where the token comes from the mount path.
 type PickRequest = Request<{ token: string }>;
 
@@ -331,6 +334,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   function idList(v: unknown): number[] {
     if (!Array.isArray(v) || !v.length) throw bad('ids must be a non-empty array');
+    if (v.length > MAX_BULK_IDS) throw bad(`at most ${MAX_BULK_IDS} pins at a time`);
     const ids: number[] = [];
     for (const id of v.map(toId)) {
       if (id === null) throw bad('invalid pin id');
