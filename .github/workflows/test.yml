@@ -37,8 +37,11 @@ jobs:
         if: always()
         run: |
           { echo '### Coverage (src/)'; echo '```'; npx c8 report; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      # Coveralls keeps the history, comments the change on PRs and serves the README badge.
+      # Coveralls keeps the history, comments the change on PRs and serves the README badge. Its
+      # failures don't fail the job: this job is a required check, and an outage there shouldn't block
+      # merges.
       - uses: coverallsapp/github-action@v2
         with:
           file: coverage/lcov.info
           format: lcov
+          fail-on-error: false
