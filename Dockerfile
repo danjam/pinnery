@@ -1,5 +1,5 @@
 # Build stage: build dist/ (the web app and extension bundles), then keep only production dependencies.
-FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
+FROM node:26-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS build
 
 ENV NODE_ENV=production
 WORKDIR /app
@@ -22,7 +22,9 @@ RUN mkdir /data
 
 # Runtime: distroless Node, i.e. just Node and the libraries it needs. No shell, npm or package
 # manager, so far less to patch. Debian-based (glibc), which the prebuilt sqlite/sharp binaries need.
-FROM gcr.io/distroless/nodejs24-debian13:latest@sha256:03980f6fd2a3245fa06e371c36fd33528ebbc676a1d0f84e3e21d95cd291b807
+# The Node major is in the image name (nodejsNN), which Renovate can't bump: change it by hand with the
+# build stage's node:NN-slim. CI (test.yml) fails while the two differ.
+FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:c952ca0a7057a306eadacf330fe972dffd016a22ec2c5b67cb3abb7d2746a276
 
 ENV NODE_ENV=production
 # The image keeps node in /nodejs/bin, off PATH; this lets healthchecks (ours and existing compose
