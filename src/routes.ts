@@ -256,6 +256,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return v.slice(0, max);
   }
 
+  // A pin's link back to its page: kept only if it's an http(s) URL, so a javascript: or data:
+  // URL can never become a link.
+  function cleanUrl(v: unknown): string | null {
+    const s = cleanText(v, 2048);
+    if (!s) return null;
+    try {
+      const { protocol } = new URL(s);
+      return protocol === 'http:' || protocol === 'https:' ? s : null;
+    } catch {
+      return null;
+    }
+  }
+
   function insert(boardId: number, info: Fingerprint, { source_url, page_title }: PinMeta): PinRow {
     const { lastInsertRowid } = insertPin.run({ board_id: boardId, ...info, source_url, page_title });
     return getPin.get(lastInsertRowid)!;
@@ -278,7 +291,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
     if (!access.canEditBoard(req.user.id, boardId)) throw notFound('board');
     const url = body.url.trim();
-    const pageUrl = cleanText(body.source_url, 2048);
+    const pageUrl = cleanUrl(body.source_url);
     const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
     const pin = await savePin(req.user.id, boardId, buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) });
     res.status(201).json(pin);
@@ -291,7 +304,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (!boardId) throw bad('board_id is required');
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
     const pin = await savePin(req.user.id, boardId, req.body, {
-      source_url: cleanText(queryText(req, 'source_url'), 2048),
+      source_url: cleanUrl(queryText(req, 'source_url')),
       page_title: cleanText(queryText(req, 'page_title') ?? queryText(req, 'name'), 500),
     });
     res.status(201).json(pin);
@@ -313,7 +326,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   // Raw upload: the body is the file. Query: source_url and page_title.
   api.post('/pick/upload', express.raw({ type: () => true, limit: MAX_BYTES }), async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
-    res.status(201).json(await createPick(req.body, { source_url: cleanText(queryText(req, 'source_url'), 2048), page_title: cleanText(queryText(req, 'page_title'), 500) }, req.user.id));
+    res.status(201).json(await createPick(req.body, { source_url: cleanUrl(queryText(req, 'source_url')), page_title: cleanText(queryText(req, 'page_title'), 500) }, req.user.id));
   });
 
   // Server-side fetch. Body: { url, source_url?, page_title? }.
@@ -321,7 +334,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     const body = req.body || {};
     if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
     const url = body.url.trim();
-    const pageUrl = cleanText(body.source_url, 2048);
+    const pageUrl = cleanUrl(body.source_url);
     const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
     res.status(201).json(await createPick(buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) }, req.user.id));
   });
@@ -387,7 +400,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   // ---- export / import (see transfer.ts) ---------------------------------------------------
 
-  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText }));
+  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl }));
 
   // deletePinRows is for users.ts, which deletes a user's boards inside its own transaction.
   return { api, pick: createPickRoutes(), deletePinRows };

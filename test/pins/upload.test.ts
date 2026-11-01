@@ -39,6 +39,17 @@ describe('pins', () => {
     assert.equal(got.body.sha256, png.body.sha256);
   });
 
+  it('keeps only http(s) source URLs', async () => {
+    const src = async (sourceUrl: string) => (await upload(alice, board.id, await pngBuffer({ color: '#0c0c0c' }), `&source_url=${encodeURIComponent(sourceUrl)}`)).body.source_url;
+    assert.equal(await src('javascript:alert(1)'), null);
+    assert.equal(await src('data:text/html,<b>hi</b>'), null);
+    assert.equal(await src('not a url'), null);
+    assert.equal(await src('http://example.com/a'), 'http://example.com/a');
+    const parked = await rawPost(alice, '/api/pick/upload?source_url=javascript%3Aalert(1)', await pngBuffer({ color: '#0d0d0d' }));
+    const commit = await server.anon().post(`/pick/${parked.body.token}/commit`, { board_id: board.id });
+    assert.equal(commit.body.pin.source_url, null);
+  });
+
   it('uploads AVIF and makes its thumbnails', async () => {
     const r = await upload(alice, board.id, await avifBuffer({ width: 40, height: 30, color: '#808000' }));
     assert.equal(r.status, 201);

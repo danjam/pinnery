@@ -186,6 +186,22 @@ describe('export and import', () => {
     assert.equal(pin.page_title, 'T');
     assert.equal(pin.created_at, '2020-01-02T03:04:05.000Z');
   });
+
+  it('drops non-http(s) source URLs on import', async () => {
+    const u = await server.createUser('heidi@example.com', 'heidi-password-1');
+    const zip = await makeZip([
+      ['pins.json', manifest([{ name: 'Links', pins: [
+        { file: 'Links/a.png', source_url: 'javascript:alert(1)' },
+        { file: 'Links/b.png', source_url: 'https://example.com/b' },
+      ] }])],
+      ['Links/a.png', await pngBuffer({ color: '#303030' })],
+      ['Links/b.png', await pngBuffer({ color: '#404040' })],
+    ]);
+    assert.equal((await importZip(u, zip)).status, 200);
+    const b = (await u.get('/api/boards')).body[0];
+    const urls = (await u.get(`/api/boards/${b.id}/pins?order=asc`)).body.pins.map((p: { source_url: string | null }) => p.source_url);
+    assert.deepEqual(urls, [null, 'https://example.com/b']);
+  });
 });
 
 describe('zip reader limits', () => {
