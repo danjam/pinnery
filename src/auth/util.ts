@@ -8,6 +8,9 @@ export const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const LOGIN_MAX_ATTEMPTS = 10;
 export const MIN_PASSWORD = 8;
 export const HOUR_MS = 60 * 60 * 1000;
+// How stale a session's last_used_at may get before a request refreshes it, so browsing a board
+// isn't one database write per thumbnail.
+export const TOUCH_INTERVAL_MS = 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export const sha256 = (s: string) => crypto.createHash('sha256').update(s).digest();
