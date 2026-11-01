@@ -1,7 +1,8 @@
 name: Test
 # Type-checks everything (npm run typecheck), then runs the API test suite (test/**/*.test.ts) against
 # a real server and a temporary database, with coverage, on every push to master and every PR, so a
-# red run shows before a release. PRs that only change docs skip the suite (see `changes`).
+# red run shows before a release, and the browser tests (e2e/) in a job of their own. PRs that only
+# change docs skip both (see `changes`).
 on:
   push:
     branches: [master]
@@ -47,7 +48,7 @@ jobs:
         run: |
           build=$(sed -nE 's/^FROM node:([0-9]+)-slim.*/\1/p' Dockerfile)
           runtime=$(sed -nE 's|^FROM gcr.io/distroless/nodejs([0-9]+)-.*|\1|p' Dockerfile)
-          ci=$(sed -nE 's/^ +node-version: *([0-9]+).*/\1/p' .github/workflows/test.yml)
+          ci=$(sed -nE 's/^ +node-version: *([0-9]+).*/\1/p' .github/workflows/test.yml | sort -u) # one per job; all must agree
           echo "build node:$build, runtime nodejs$runtime, CI node $ci"
           [ -n "$build" ] && [ "$build" = "$runtime" ] && [ "$build" = "$ci" ]
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -71,3 +72,28 @@ jobs:
           file: coverage/lcov.info
           format: lcov
           fail-on-error: false
+
+  # Browser tests (e2e/, Playwright, Chromium) against throwaway servers. Optional: not in the
+  # master ruleset. Skipped for docs-only PRs, like `test`.
+  e2e:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.docs-only != 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+      # The HTML report, with a trace for each failed test (npx playwright show-report).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
