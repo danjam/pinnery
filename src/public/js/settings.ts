@@ -6,6 +6,9 @@ import { appearanceSection } from './theme.ts';
 import { view, actionsEl, state, setCrumbs, moreButton, signOut } from './page.ts';
 import { usersSection, invitesSection, when } from './settings-users.ts';
 
+// The version in the footer links here.
+const REPO_URL = 'https://github.com/danjam/pinnery';
+
 // Chrome's install offer isn't in lib.dom.
 interface BeforeInstallPromptEvent extends Event {
   prompt(): Promise<void>;
@@ -202,7 +205,9 @@ export async function showSettings(tab?: string) {
   };
   show(current);
   const footer = el('footer', { class: 'settings-footer' });
-  fetch('/healthz').then((r): Promise<{ version?: string }> => r.json()).then(({ version }) => { if (version) footer.textContent = `Pinnery v${version}`; }).catch(() => {});
+  fetch('/healthz').then((r): Promise<{ version?: string }> => r.json()).then(({ version }) => {
+    if (version) footer.replaceChildren(el('a', { href: REPO_URL, target: '_blank', rel: 'noopener', text: `Pinnery v${version}` }));
+  }).catch(() => {});
   view.replaceChildren(el('div', { class: 'settings' }, tabBar, body, footer));
 }
 
