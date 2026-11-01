@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
 import type { Db } from '../db.ts';
 import {
-  COOKIE, HOUR_MS, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS, SESSION_DAYS,
+  COOKIE, HOUR_MS, LOGIN_MAX_ATTEMPTS, LOGIN_WINDOW_MS, SESSION_DAYS, TOUCH_INTERVAL_MS,
   hashPassword, hex, normaliseEmail, parseCookies, publicUser, sha256, verifyHash,
 } from './util.ts';
 import type { AuthUserRow, Session } from './util.ts';
@@ -49,8 +49,8 @@ export function createCore(db: Db) {
   const tokenRow = db.prepare<[number | bigint], TokenRow>('SELECT id, name, created_at, last_used_at FROM sessions WHERE id = ?');
   const listTokenRows = db.prepare<[number], TokenRow>("SELECT id, name, created_at, last_used_at FROM sessions WHERE kind = 'token' AND user_id = ? ORDER BY id");
   const deleteTokenById = db.prepare("DELETE FROM sessions WHERE id = ? AND kind = 'token' AND user_id = ?");
-  const findToken = db.prepare<[string], { id: number; kind: 'session' | 'token'; user_id: number } & Omit<AuthUserRow, 'id' | 'password_hash'>>(`
-    SELECT s.id, s.kind, u.id AS user_id, u.email, u.display_name, u.is_admin, u.must_change_password
+  const findToken = db.prepare<[string], { id: number; kind: 'session' | 'token'; last_used_at: string | null; user_id: number } & Omit<AuthUserRow, 'id' | 'password_hash'>>(`
+    SELECT s.id, s.kind, s.last_used_at, u.id AS user_id, u.email, u.display_name, u.is_admin, u.must_change_password
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token_hash = ? AND (s.expires_at IS NULL OR s.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))`);
   const touch = db.prepare("UPDATE sessions SET last_used_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?");
@@ -105,7 +105,7 @@ export function createCore(db: Db) {
     if (!token) return null;
     const row = findToken.get(hex(sha256(token)));
     if (!row) return null;
-    touch.run(row.id);
+    if (!row.last_used_at || Date.now() - Date.parse(row.last_used_at) >= TOUCH_INTERVAL_MS) touch.run(row.id);
     return { id: row.id, kind: row.kind, token, user: publicUser({ ...row, id: row.user_id }) };
   }
 
