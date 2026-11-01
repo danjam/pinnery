@@ -27,11 +27,17 @@ interface SrcsetEntry {
     'data-large-src', 'data-zoom-src', 'data-zoom-image', 'data-hi-res', 'data-image', 'data-url'];
   const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i;
 
+  // The schemes an image can be saved from: blob: and data: are fetched in the page (pageFetch).
+  const SCHEMES = new Set(['http:', 'https:', 'blob:', 'data:']);
+
   const abs = (u: string | null | undefined): string | null => {
     if (!u || typeof u !== 'string') return null;
     u = u.trim();
-    if (!u || u.startsWith('javascript:')) return null;
-    try { return new URL(u, document.baseURI).href; } catch { return null; }
+    if (!u) return null;
+    try {
+      const url = new URL(u, document.baseURI);
+      return SCHEMES.has(url.protocol) ? url.href : null;
+    } catch { return null; }
   };
 
   // "url 640w, url2 1280w" or "url 1x, url2 2x" -> [{ url, w, x }]. Walks the string the way the
