@@ -14,14 +14,16 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-      # The Dockerfile's build and runtime stages must run the same Node major. Renovate bumps the
-      # build image but can't rename the runtime one (nodejsNN), so a split bump fails here.
+      # The Dockerfile's build and runtime stages, and CI below, must run the same Node major.
+      # Renovate bumps the build image but can't rename the runtime one (nodejsNN), so a split bump
+      # fails here.
       - name: Node majors match
         run: |
           build=$(sed -nE 's/^FROM node:([0-9]+)-slim.*/\1/p' Dockerfile)
           runtime=$(sed -nE 's|^FROM gcr.io/distroless/nodejs([0-9]+)-.*|\1|p' Dockerfile)
-          echo "build node:$build, runtime nodejs$runtime"
-          [ -n "$build" ] && [ "$build" = "$runtime" ]
+          ci=$(sed -nE 's/^ +node-version: *([0-9]+).*/\1/p' .github/workflows/test.yml)
+          echo "build node:$build, runtime nodejs$runtime, CI node $ci"
+          [ -n "$build" ] && [ "$build" = "$runtime" ] && [ "$build" = "$ci" ]
       - uses: actions/setup-node@v7
         with:
           node-version: 26
