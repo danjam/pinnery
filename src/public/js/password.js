@@ -1,5 +1,6 @@
 // Script for password.html (kept out of the page so the CSP can forbid inline scripts).
 
+import { nextPath } from './next.js';
 const form = document.getElementById('change');
 const error = document.getElementById('error');
 const fail = (msg) => { error.textContent = msg; error.hidden = false; };
@@ -14,8 +15,7 @@ form.addEventListener('submit', async (e) => {
   });
   if (res.ok) {
     // Back to where the gate caught us (same-origin only), else home.
-    const next = new URLSearchParams(location.search).get('next');
-    location.replace(next && /^\/(?![/\\])/.test(next) ? next : '/');
+    location.replace(nextPath());
     return;
   }
   if (res.status === 401) { location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search)}`); return; }

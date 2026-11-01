@@ -1,5 +1,6 @@
 // Script for login.html (kept out of the page so the CSP can forbid inline scripts).
 
+import { nextPath } from './next.js';
 const form = document.getElementById('login');
 const error = document.getElementById('error');
 form.addEventListener('submit', async (e) => {
@@ -12,8 +13,7 @@ form.addEventListener('submit', async (e) => {
   });
   if (res.ok) {
     // ?next= continues to a same-origin page (the extension's /connect); anything else goes home.
-    const next = new URLSearchParams(location.search).get('next');
-    location.replace(next && /^\/(?![/\\])/.test(next) ? next : '/');
+    location.replace(nextPath());
     return;
   }
   const body = await res.json().catch(() => ({}));
