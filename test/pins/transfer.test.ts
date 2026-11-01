@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
@@ -138,6 +139,34 @@ describe('export and import', () => {
     assert.deepEqual((await u.get('/api/boards')).body, [], 'a failed import leaves no empty boards');
     // the server is still fine
     assert.equal((await u.get('/api/me')).status, 200);
+  });
+
+  it('runs one import at a time', async () => {
+    const u = await server.createUser('grace@example.com', 'grace-password-1');
+    const zip = await makeZip([['pins.json', manifest([])]]);
+    // Hold an import open mid-upload: send the headers and part of the zip, then wait.
+    const req = http.request(new URL('/api/import', server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'content-length': zip.length, cookie: u.cookie()!, 'sec-fetch-site': 'same-origin' },
+    });
+    const first = new Promise<number>((resolve, reject) => {
+      req.on('response', (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on('error', reject);
+    });
+    req.write(zip.subarray(0, 10));
+    // Once the first is being received, a second is refused (poll: the request takes a moment to land).
+    let second;
+    for (let i = 0; i < 50; i++) {
+      second = await importZip(u, zip);
+      if (second.status === 409) break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    assert.equal(second?.status, 409);
+    assert.match(second?.body.error, /already running/);
+    req.end(zip.subarray(10));
+    assert.equal(await first, 200);
+    // and the next one goes through
+    assert.equal((await importZip(u, zip)).status, 200);
   });
 
   it('a good zip with a valid manifest imports', async () => {

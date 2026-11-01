@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import express from 'express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import type { Access } from './access.ts';
 import type { BoardRow, Db, PinRow } from './db.ts';
 import { errorMessage } from './errors.ts';
@@ -227,7 +227,21 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
     });
   }
 
+  // One import at a time, server-wide: each can spool up to IMPORT_MAX_BYTES to disk, so parallel
+  // ones could fill it. Others are refused while one runs.
+  let importing = false;
+
   r.post('/import', async (req, res) => {
+    if (importing) throw new ImageError(409, 'an import is already running, try again shortly');
+    importing = true;
+    try {
+      await importZip(req, res);
+    } finally {
+      importing = false;
+    }
+  });
+
+  async function importZip(req: Request, res: Response) {
     const file = await spool(req);
     let zip: ZipFile | null = null;
     try {
@@ -285,7 +299,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       zip?.close();
       fs.rmSync(file, { force: true });
     }
-  });
+  }
 
   return r;
 }
