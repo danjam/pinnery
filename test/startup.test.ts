@@ -117,3 +117,29 @@ describe('shutdown', () => {
     assert.match(out, /SIGTERM: shutting down/);
   });
 });
+
+describe('leftover import files', () => {
+  it('are cleared at startup', { timeout: 10_000 }, async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    await fs.mkdir(path.join(dataDir, 'tmp'));
+    await fs.writeFile(path.join(dataDir, 'tmp', 'import-0123456789abcdef.zip'), 'partial upload');
+    const env = {
+      PATH: process.env.PATH,
+      DATA_DIR: dataDir,
+      PORT: '0',
+      PINNERY_ADMIN_EMAIL: 'admin@example.com',
+      PINNERY_PASSWORD: 'initial-pass-1',
+    };
+    const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => child.kill('SIGKILL'));
+    let out = '';
+    child.stderr.on('data', (d) => { out += d; });
+    await new Promise<void>((resolve, reject) => {
+      child.stdout.on('data', (d) => { out += d; if (/listening on/.test(out)) resolve(); });
+      child.once('exit', (code) => reject(new Error(`exited ${code}: ${out}`)));
+    });
+    assert.match(out, /sweep: removed 1 leftover import file\(s\)/);
+    await assert.rejects(fs.access(path.join(dataDir, 'tmp')), { code: 'ENOENT' });
+  });
+});
