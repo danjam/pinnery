@@ -40,6 +40,12 @@ export function failureCounter(max = LOGIN_MAX_ATTEMPTS, windowMs = LOGIN_WINDOW
       sweep(now);
       attempts.get(key)?.push(now) ?? attempts.set(key, [now]);
     },
+    // Take back one recorded event, for an attempt that was counted up front and then succeeded.
+    forgive(key: string | undefined) {
+      const list = attempts.get(key);
+      list?.pop();
+      if (list && !list.length) attempts.delete(key);
+    },
     get size() { return attempts.size; },
   };
 }
@@ -76,6 +82,7 @@ export function createCore(db: Db) {
   const forgotByEmail = failureCounter(3, HOUR_MS);        // reset requests, per address
   const throttled = loginFailures.throttled;
   const recordFailure = loginFailures.record;
+  const forgiveFailure = loginFailures.forgive;
 
   // Secure when the request came over HTTPS (directly or via the trusted reverse proxy's
   // X-Forwarded-Proto), so plain-http setups can still sign in.
@@ -86,23 +93,33 @@ export function createCore(db: Db) {
   }
 
   // Hashing against this when the email is unknown keeps the timing the same as a wrong password.
-  const DUMMY_HASH = hashPassword(hex(crypto.randomBytes(16)));
+  // Only its salt is used, so it needn't be a real hash.
+  const DUMMY_HASH = `${hex(crypto.randomBytes(16))}:${hex(crypto.randomBytes(32))}`;
 
   // Check the submitted email + password, counting failures per IP (not per account, so nobody can
   // lock another user out). Returns the user row, or null after sending the error — the same one
   // for an unknown email and a wrong password.
-  function authenticate(req: Request, res: Response): AuthUserRow | null {
+  async function authenticate(req: Request, res: Response): Promise<AuthUserRow | null> {
     const ip = req.ip;
     if (throttled(ip)) { res.status(429).json({ error: 'too many attempts, try again later' }); return null; }
     const body = req.body || {};
     const user = getUserByEmail.get(normaliseEmail(body.email));
     const given = typeof body.password === 'string' ? body.password : '';
-    if (!verifyHash(given, user ? user.password_hash : DUMMY_HASH) || !user) {
-      recordFailure(ip);
+    if (!await checkPassword(ip, given, user ? user.password_hash : DUMMY_HASH) || !user) {
       res.status(401).json({ error: 'wrong email or password' });
       return null;
     }
     return user;
+  }
+
+  // Verify a password against the caller's login budget. The attempt counts before hashing, so
+  // concurrent requests from one IP can't all pass throttled() while their hashes run; it's
+  // forgiven if the password is right.
+  async function checkPassword(ip: string | undefined, given: string, stored: string | null) {
+    recordFailure(ip);
+    const ok = await verifyHash(given, stored);
+    if (ok) forgiveFailure(ip);
+    return ok;
   }
 
   const changeRequired = (res: Response) => res.status(403).json({ error: 'choose a new password first', code: 'password_change_required' });
@@ -131,12 +148,19 @@ export function createCore(db: Db) {
   }
 
   // Set a user's password: clears a required change and cancels any outstanding reset links.
-  // Browser sessions other than `keepSessionId` are signed out; API tokens stay.
-  const setPassword = db.transaction((userId: number, next: string, keepSessionId: number | null) => {
-    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hashPassword(next), userId);
+  // Browser sessions other than `keepSessionId` are signed out; API tokens stay. With `linkId`, the
+  // emailed link that authorised it is claimed in the same transaction: if a concurrent request
+  // used it while this one was hashing, nothing changes and it returns false.
+  const storePassword = db.transaction((userId: number, hash: string, keepSessionId: number | null, linkId?: number | bigint) => {
+    if (linkId !== undefined && !db.prepare('DELETE FROM email_tokens WHERE id = ?').run(linkId).changes) return false;
+    db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hash, userId);
     db.prepare("DELETE FROM email_tokens WHERE kind = 'reset' AND user_id = ?").run(userId);
     db.prepare("DELETE FROM sessions WHERE kind = 'session' AND user_id = ? AND id IS NOT ?").run(userId, keepSessionId ?? null);
+    return true;
   });
+  async function setPassword(userId: number, next: string, keepSessionId: number | null, linkId?: number | bigint) {
+    return storePassword(userId, await hashPassword(next), keepSessionId, linkId);
+  }
 
   // Create a named API token. Prefixed so a leaked token is recognisable (secret scanners, logs);
   // older unprefixed tokens still work, since only the hash of whatever is presented is compared.
@@ -150,7 +174,7 @@ export function createCore(db: Db) {
 
   return {
     getUser, getUserByEmail, listTokenRows, deleteTokenById, deleteToken,
-    exchangeFailures, linkFailures, forgotByIp, forgotByEmail, throttled, recordFailure,
-    cookieHeader, authenticate, changeRequired, identify, startSession, setPassword, mintToken,
+    exchangeFailures, linkFailures, forgotByIp, forgotByEmail, throttled,
+    cookieHeader, authenticate, checkPassword, changeRequired, identify, startSession, setPassword, mintToken,
   };
 }

@@ -30,6 +30,19 @@ describe('failure counter', () => {
     assert.equal(c.throttled('old'), false);
   });
 
+  it('forgive takes back one event and drops an emptied key', () => {
+    const c = failureCounter(2, WINDOW);
+    c.record('k');
+    c.record('k');
+    assert.equal(c.throttled('k'), true);
+    c.forgive('k');
+    assert.equal(c.throttled('k'), false);
+    c.forgive('k');
+    assert.equal(c.size, 0);
+    c.forgive('k');
+    assert.equal(c.size, 0);
+  });
+
   it('sweeps from throttled() too', () => {
     const c = failureCounter(10, WINDOW);
     for (let i = 0; i < 5; i++) c.record(`k${i}`);

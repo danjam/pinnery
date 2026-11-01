@@ -54,6 +54,22 @@ describe('accounts (mail on)', () => {
       await server.mail.waitFor((m) => m.to.includes('alice@example.com') && /password was changed/i.test(m.subject));
     });
 
+    it('a reset link works once, even for two submits at the same moment', async () => {
+      await server.createUser('rory@example.com', 'rory-pass-1');
+      server.mail.clear();
+      const anon = server.anon({ ip: '127.0.0.34' });
+      await anon.post('/api/forgot', { email: 'rory@example.com' });
+      const mail = await server.mail.waitFor((m) => m.to.includes('rory@example.com') && /reset/i.test(m.subject));
+      const token = tokenFromLink(linkFrom(mail, '/reset/'));
+      const [a, b] = await Promise.all([
+        anon.post(`/api/reset/${token}`, { password: 'rory-new-pass-1' }),
+        anon.post(`/api/reset/${token}`, { password: 'rory-new-pass-2' }),
+      ]);
+      assert.deepEqual([a.status, b.status].sort(), [200, 404]);
+      const won = a.status === 200 ? 'rory-new-pass-1' : 'rory-new-pass-2';
+      await server.login('rory@example.com', won, { ip: '127.0.0.35' });
+    });
+
     it('answers the same for unknown addresses and sends no mail', async () => {
       server.mail.clear();
       const anon = server.anon({ ip: '127.0.0.33' });

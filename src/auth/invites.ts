@@ -58,16 +58,18 @@ export function createInvites(db: Db, { getUserByEmail, startSession }: Core, { 
 
   // POST /api/signup/:token — body { display_name, password }. Creates the (non-admin) user,
   // consumes the invite and signs them in.
-  function signup(req: Request, res: Response) {
+  async function signup(req: Request, res: Response) {
     const row = lookupLink(req, res, 'invite', 'invite');
     if (!row) return;
     const name = typeof req.body?.display_name === 'string' ? req.body.display_name.trim() : '';
     if (!name || name.length > 100) return res.status(400).json({ error: 'display name must be 1–100 characters' });
     const pw = typeof req.body.password === 'string' ? req.body.password : '';
     if (pw.length < MIN_PASSWORD) return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD} characters` });
+    const hash = await hashPassword(pw);
+    // Checked again after hashing: a concurrent signup on the same invite may have won meanwhile.
     const userId = db.transaction(() => {
       if (getUserByEmail.get(row.email)) return null;
-      const { lastInsertRowid } = db.prepare('INSERT INTO users (email, display_name, password_hash) VALUES (?, ?, ?)').run(row.email, name, hashPassword(pw));
+      const { lastInsertRowid } = db.prepare('INSERT INTO users (email, display_name, password_hash) VALUES (?, ?, ?)').run(row.email, name, hash);
       deleteLink.run(row.id);
       return lastInsertRowid;
     })();
