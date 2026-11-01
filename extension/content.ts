@@ -2,7 +2,7 @@
 // largest version of the image (srcset, <picture>, lazy-load attributes), fetches images from inside
 // the page when the extension's own fetch is refused, and shows the "pinned" toast.
 
-import type { ContentMessage, PageFetchReply, ResolveReply } from './lib/messages.ts';
+import type { ContentMessage, PageFetchReply, ResolveReply, WorkerMessage } from './lib/messages.ts';
 
 declare global {
   interface Window {
@@ -180,7 +180,7 @@ interface SrcsetEntry {
     t.addEventListener('mouseleave', start);
     if (url) {
       t.title = 'Open the board';
-      t.addEventListener('click', () => { dismiss(); chrome.runtime.sendMessage({ type: 'open', url }); });
+      t.addEventListener('click', () => { dismiss(); chrome.runtime.sendMessage({ type: 'open', url } satisfies WorkerMessage); });
     }
     document.body.append(host);
     start();
