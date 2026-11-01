@@ -10,17 +10,18 @@ import { startServer } from './helpers/server.js';
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('startup', () => {
-  let server, dataDir;
+  let server, dataDir, child;
   before(async () => {
     server = await startServer();
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
   });
   after(async () => {
+    child?.kill('SIGKILL'); // only still running if the bind wrongly succeeded
     await server.stop();
     await fs.rm(dataDir, { recursive: true, force: true });
   });
 
-  it('exits non-zero with the reason when the port is taken', async () => {
+  it('exits non-zero with the reason when the port is taken', { timeout: 10_000 }, async () => {
     const env = {
       PATH: process.env.PATH,
       DATA_DIR: dataDir,
@@ -28,7 +29,7 @@ describe('startup', () => {
       PINNERY_ADMIN_EMAIL: 'admin@example.com',
       PINNERY_PASSWORD: 'initial-pass-1',
     };
-    const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
