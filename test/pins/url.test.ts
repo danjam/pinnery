@@ -77,6 +77,18 @@ describe('pins by URL', () => {
     assert.equal((await openUser.post('/api/pins/url', { board_id: b.id, url: `${base()}/missing` })).status, 502);
   });
 
+  it("doesn't pass network error details back to the client", async () => {
+    const b = await newBoard(openUser, 'Refused');
+    // A port nothing listens on: the connect error names the address and port.
+    const closed = http.createServer();
+    await new Promise<void>((r) => closed.listen(0, '127.0.0.1', r));
+    const { port } = closed.address() as AddressInfo;
+    await new Promise<void>((r) => closed.close(() => r()));
+    const r = await openUser.post('/api/pins/url', { board_id: b.id, url: `http://127.0.0.1:${port}/img.png` });
+    assert.equal(r.status, 502);
+    assert.equal(r.body.error, 'fetch failed');
+  });
+
   it('picks by URL work too when allowed', async () => {
     const r = await openUser.post('/api/pick/url', { url: `${base()}/img.png` });
     assert.equal(r.status, 201);
