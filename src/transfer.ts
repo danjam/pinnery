@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import express from 'express';
-import type { Request, Response } from 'express';
+import type { Request } from 'express';
 import type { Access } from './access.ts';
 import type { BoardRow, Db, PinRow } from './db.ts';
 import { errorMessage } from './errors.ts';
@@ -236,14 +236,18 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
   r.post('/import', async (req, res) => {
     if (importing) throw new ImageError(409, 'an import is already running, try again shortly');
     importing = true;
+    let summary;
     try {
-      await importZip(req, res);
+      summary = await importZip(req);
     } finally {
       importing = false;
     }
+    // Reply only once the lock is free and the upload is cleaned up, so a client can import
+    // again as soon as it has the response.
+    res.json(summary);
   });
 
-  async function importZip(req: Request, res: Response) {
+  async function importZip(req: Request) {
     const file = await spool(req);
     let zip: ZipFile | null = null;
     try {
@@ -295,7 +299,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
         for (const id of created) if (!anyPin.get(id)) deleteBoard.run(id);
         throw e;
       }
-      res.json(summary);
+      return summary;
     } finally {
       await zip?.close();
       await fs.promises.rm(file, { force: true });

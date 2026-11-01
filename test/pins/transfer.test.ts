@@ -168,7 +168,9 @@ describe('export and import', () => {
     assert.match(second.body.error, /already running/);
     req.end(zip.subarray(10));
     assert.equal(await first, 200);
-    // and the next one goes through
+    // The reply only comes once the upload is cleaned up and the lock released...
+    assert.ok(!spooling(), 'the first import cleaned up before replying');
+    // ...so the next one goes through straight away
     assert.equal((await importZip(u, zip)).status, 200);
   });
 
