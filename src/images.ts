@@ -12,6 +12,12 @@ export const MIMES: Record<string, string> = {
   avif: 'image/avif',
 };
 
+// Decoded size cap. A small, highly compressed file can declare a huge canvas, and decoding it
+// (to inspect or thumbnail) allocates the full bitmap; sharp's own default is ~268 MP.
+export const MAX_PIXELS = 100_000_000;
+const SHARP_OPTS = { failOn: 'none', limitInputPixels: MAX_PIXELS } as const;
+const isPixelLimit = (e: unknown) => e instanceof Error && /pixel limit/.test(e.message);
+
 // Grid thumbnails: long-side widths. Both are made at save time and regenerated on demand if missing.
 export const THUMB_SIZES = [400, 800];
 
@@ -55,8 +61,9 @@ export function createStore(dataDir: string) {
   async function inspect(buf: Buffer): Promise<ImageInfo> {
     let meta;
     try {
-      meta = await sharp(buf, { failOn: 'none' }).metadata();
-    } catch {
+      meta = await sharp(buf, SHARP_OPTS).metadata();
+    } catch (e) {
+      if (isPixelLimit(e)) throw new ImageError(413, `image too large (limit ${MAX_PIXELS / 1e6} megapixels)`);
       throw new ImageError(415, 'not a supported image');
     }
     const mime = MIMES[meta.format];
@@ -73,7 +80,7 @@ export function createStore(dataDir: string) {
 
   async function makeThumb(source: Buffer | string, size: number): Promise<Buffer> {
     // Default sharp reads page 0 only, so animated GIF/WebP thumbs are a still of the first frame.
-    return sharp(source, { failOn: 'none' })
+    return sharp(source, SHARP_OPTS)
       .rotate()
       .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82 })

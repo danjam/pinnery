@@ -1,10 +1,14 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
 import { newBoard, upload, type BoardRef } from '../helpers/pins.ts';
-import { createZipWriter } from '../../src/zip.ts';
+import { createZipWriter, openZipFile } from '../../src/zip.ts';
 
 // Build a zip in memory with the app's own writer.
 async function makeZip(entries: [string, string | Buffer][]) {
@@ -153,5 +157,44 @@ describe('export and import', () => {
     const pin = (await u.get(`/api/boards/${b.id}/pins`)).body.pins[0];
     assert.equal(pin.page_title, 'T');
     assert.equal(pin.created_at, '2020-01-02T03:04:05.000Z');
+  });
+});
+
+describe('zip reader limits', () => {
+  let dir: string;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinnery-zip-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const write = (name: string, buf: Buffer) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, buf);
+    return file;
+  };
+
+  it('refuses an entry whose declared compressed size is over the cap, before reading it', async () => {
+    const zip = await makeZip([['a.bin', Buffer.alloc(10, 1)], ['pad.bin', crypto.randomBytes(4000)]]);
+    // Rewrite a.bin's compressed size in the central directory (offset 20 of its record) to 3000:
+    // still inside the file, but over the 1000-byte cap while its declared size stays 10.
+    const cd = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    zip.writeUInt32LE(3000, cd + 20);
+    const z = openZipFile(write('compressed.zip', zip), { maxEntrySize: 1000 });
+    try {
+      const entry = z.entries.find((e) => e.name === 'a.bin')!;
+      assert.throws(() => z.read(entry), /a\.bin: too large/);
+    } finally {
+      z.close();
+    }
+  });
+
+  it('still reads an incompressible entry at the cap, though deflate made it slightly bigger', async () => {
+    const data = crypto.randomBytes(1000);
+    const z = openZipFile(write('incompressible.zip', await makeZip([['r.bin', data]])), { maxEntrySize: 1000 });
+    try {
+      const entry = z.entries[0];
+      assert.ok(entry.compressedSize > 1000, `compressed ${entry.compressedSize}`);
+      assert.deepEqual(z.read(entry), data);
+    } finally {
+      z.close();
+    }
   });
 });

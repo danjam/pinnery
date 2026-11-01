@@ -1,6 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import zlib from 'node:zlib';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
@@ -51,6 +52,17 @@ describe('pins', () => {
     assert.equal(big.status, 413);
   });
 
+  it('refuses images that would decode to more than the pixel limit', async () => {
+    // A tiny PNG whose header claims 20000x20000 (400 MP): rewrite IHDR's size and its CRC.
+    const png = await pngBuffer({ width: 8, height: 8 });
+    png.writeUInt32BE(20000, 16);
+    png.writeUInt32BE(20000, 20);
+    png.writeUInt32BE(zlib.crc32(png.subarray(12, 29)), 29);
+    const r = await upload(alice, board.id, png);
+    assert.equal(r.status, 413);
+    assert.match(r.body.error, /megapixels/);
+  });
+
   it('cannot delete or move another user\'s pins', async () => {
     const mine = (await upload(alice, board.id, await pngBuffer({ color: '#010203' }))).body;
     const bobBoard = await newBoard(bob, 'Bob target');
@@ -86,5 +98,15 @@ describe('pins', () => {
     assert.deepEqual(del.body, { deleted: 3 });
     for (const p of pins) assert.ok(!fs.existsSync(originalFile(server, p.sha256)));
     assert.equal((await alice.post('/api/pins/delete', { ids: [] })).status, 400);
+  });
+
+  it('caps bulk requests at 1000 ids', async () => {
+    const ids = Array.from({ length: 1001 }, (_, i) => i + 1);
+    const del = await alice.post('/api/pins/delete', { ids });
+    assert.equal(del.status, 400);
+    assert.match(del.body.error, /at most 1000/);
+    assert.equal((await alice.post('/api/pins/move', { ids, board_id: board.id })).status, 400);
+    // 1000 is still allowed through to the access check (these ids aren't alice's: not found)
+    assert.equal((await alice.post('/api/pins/delete', { ids: ids.slice(0, 1000).map((i) => i + 1_000_000) })).status, 404);
   });
 });
