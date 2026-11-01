@@ -33,9 +33,8 @@ export function walk(dir: string, rel = ''): string[] {
 // `compress` is false (already-compressed images: storing is faster and no bigger).
 export interface ZipSink {
   write(buf: Buffer): boolean;
-  // Only a sink whose write() can return false needs these.
-  on?(event: 'drain' | 'close', listener: () => void): unknown;
-  off?(event: 'drain' | 'close', listener: () => void): unknown;
+  on(event: 'drain' | 'close', listener: () => void): unknown;
+  off(event: 'drain' | 'close', listener: () => void): unknown;
 }
 
 export function createZipWriter(sink: ZipSink) {
@@ -48,9 +47,9 @@ export function createZipWriter(sink: ZipSink) {
     offset += buf.length;
     if (sink.write(buf)) return;
     await new Promise<void>((resolve) => {
-      const done = () => { sink.off?.('drain', done); sink.off?.('close', done); resolve(); };
-      sink.on?.('drain', done);
-      sink.on?.('close', done);
+      const done = () => { sink.off('drain', done); sink.off('close', done); resolve(); };
+      sink.on('drain', done);
+      sink.on('close', done);
     });
   }
 
@@ -119,7 +118,7 @@ export function createZipWriter(sink: ZipSink) {
 // `transform(rel, buf)` may return replacement bytes for a file (e.g. to stamp the manifest).
 export async function zipDirectory(dir: string, prefix: string, transform: (rel: string, buf: Buffer) => Buffer = (rel, buf) => buf): Promise<Buffer> {
   const chunks: Buffer[] = [];
-  const zip = createZipWriter({ write: (b) => { chunks.push(b); return true; } });
+  const zip = createZipWriter({ write: (b) => { chunks.push(b); return true; }, on() {}, off() {} });
   for (const rel of walk(dir)) await zip.add(`${prefix}/${rel}`, transform(rel, fs.readFileSync(path.join(dir, rel))));
   await zip.end();
   return Buffer.concat(chunks);
