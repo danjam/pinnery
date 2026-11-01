@@ -2,9 +2,9 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { startServer } from '../helpers/server.js';
-import { pngBuffer } from '../helpers/images.js';
-import { newBoard, originalFile, upload } from '../helpers/pins.js';
+import { startServer } from '../helpers/server.ts';
+import { pngBuffer } from '../helpers/images.ts';
+import { newBoard, originalFile, upload } from '../helpers/pins.ts';
 
 describe('pins', () => {
   let server, alice, bob, board;

@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer } from '../helpers/server.js';
+import { startServer } from '../helpers/server.ts';
 
 const cookieRe = /^pinnery_session=[0-9a-f]{64}/;
 

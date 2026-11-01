@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { openDb } from './db.js';
 import { createAuth, safeNext, parseConnectParams } from './auth.js';
@@ -10,6 +9,7 @@ import { createStore, ImageError } from './images.js';
 import { createRoutes, createImageRoutes } from './routes.js';
 import { createUserRoutes } from './users.js';
 import { zipDirectory, walk } from './zip.js';
+import { rootDir, publicDir, extensionDir } from './paths.js';
 
 const PORT = Number(process.env.PORT) || 3420;
 const DATA_DIR = process.env.DATA_DIR || '/data';
@@ -34,14 +34,11 @@ if (missing.length) {
   process.exit(1);
 }
 
-const srcDir = path.dirname(fileURLToPath(import.meta.url));
-const publicDir = path.join(srcDir, 'public');
-const VERSION = JSON.parse(fs.readFileSync(path.join(srcDir, '..', 'package.json'), 'utf8')).version;
-// The extension version this server ships (Settings → Download); the extension compares it with its own.
-const extensionDir = path.join(srcDir, '..', 'extension');
-// Fingerprint of the extension this server ships: a hash over every file's path and bytes, in a
-// fixed order. The download stamps it into manifest.json (version_name "<version>+<fingerprint>")
-// and /healthz reports it, so the extension can tell when the server has a different build of it.
+const VERSION = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8')).version;
+// Fingerprint of the extension this server ships: a hash over every built file's path and bytes,
+// in a fixed order. The download stamps it into manifest.json (version_name
+// "<version>+<fingerprint>") and /healthz reports it, so the extension can tell when the server has
+// a different build of it.
 const EXTENSION_FINGERPRINT = (() => {
   const h = crypto.createHash('sha256');
   for (const rel of walk(extensionDir)) h.update(rel).update('\0').update(fs.readFileSync(path.join(extensionDir, rel))).update('\0');

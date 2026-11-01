@@ -1,8 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer } from '../helpers/server.js';
-import { jpegBuffer, pngBuffer } from '../helpers/images.js';
-import { newBoard, upload } from '../helpers/pins.js';
+import { startServer } from '../helpers/server.ts';
+import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
+import { newBoard, upload } from '../helpers/pins.ts';
 import { createZipWriter } from '../../src/zip.js';
 
 // Build a zip in memory with the app's own writer.

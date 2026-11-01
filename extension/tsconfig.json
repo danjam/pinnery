@@ -1,0 +1,14 @@
+{
+  // The Chrome extension's scripts, bundled by scripts/build.ts.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2024", "dom", "dom.iterable"],
+    "types": ["chrome"],
+    // Until the scripts are converted: their .js is accepted but not checked.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["."]
+}

@@ -1,7 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import { startServer } from '../helpers/server.js';
+import { startServer } from '../helpers/server.ts';
 
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
 const REDIRECT = `https://${EXT_ID}.chromiumapp.org/`;

@@ -1,6 +1,7 @@
 name: Test
-# Runs the API test suite (test/*.test.js) against a real server and a temporary database on every
-# push to master and every PR, so a red run shows before a release.
+# Type-checks everything (npm run typecheck), then runs the API test suite (test/*.test.js) against
+# a real server and a temporary database, on every push to master and every PR, so a red run shows
+# before a release.
 on:
   push:
     branches: [master]
@@ -18,4 +19,5 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test

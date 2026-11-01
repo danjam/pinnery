@@ -1,0 +1,18 @@
+{
+  // Shared by every tsconfig here. Type-check only (noEmit): Node strips types from the server's
+  // .ts files when it runs them, and esbuild bundles the browser code, so tsc never writes output.
+  // erasableSyntaxOnly keeps to syntax Node can strip (no enums, namespaces or parameter
+  // properties); verbatimModuleSyntax makes type-only imports say `import type`, since Node
+  // leaves any other import in place and it fails at runtime.
+  "compilerOptions": {
+    "target": "es2024",
+    "strict": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true
+  }
+}

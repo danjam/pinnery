@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { setupBoards } from '../helpers/boards.js';
+import { setupBoards } from '../helpers/boards.ts';
 
 let server;
 let owner, editor, viewer, other, ids, board, pin, sharePath;

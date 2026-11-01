@@ -1,17 +1,23 @@
-# Build stage: install production dependencies with npm.
+# Build stage: build dist/ (the web app and extension bundles), then keep only production dependencies.
 FROM node:24-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c AS build
 
 ENV NODE_ENV=production
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+# --include=dev: the build needs esbuild (NODE_ENV=production would leave dev dependencies out).
 # --ignore-scripts: better-sqlite3 13 ships prebuilt binaries and sets gypfile:false, but that flag
 # isn't recorded in the lockfile, so npm ci would otherwise try a node-gyp rebuild (no toolchain here).
-# sharp uses platform packages, so nothing we depend on needs an install script.
-RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
+# sharp and esbuild use platform packages, so nothing we depend on needs an install script.
+RUN npm ci --include=dev --ignore-scripts
 
+COPY scripts ./scripts
 COPY src ./src
 COPY extension ./extension
+# The server serves dist/, so the sources it was built from (and the build script) can go.
+RUN npm run build \
+  && npm prune --omit=dev && npm cache clean --force \
+  && rm -rf scripts src/public extension
 RUN mkdir /data
 
 # Runtime: distroless Node, i.e. just Node and the libraries it needs. No shell, npm or package

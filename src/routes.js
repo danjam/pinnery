@@ -1,11 +1,11 @@
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { createAccess } from './access.js';
 import { linkBase } from './auth.js';
 import { fetchImage, MAX_BYTES } from './fetch.js';
 import { ImageError, THUMB_SIZES, isSha } from './images.js';
 import { message } from './mail.js';
+import { publicDir } from './paths.js';
 import { createPending } from './pending.js';
 import { createTransferRoutes } from './transfer.js';
 
@@ -342,7 +342,7 @@ export function createRoutes(db, store, { dataDir, mailer, publicUrl = '' }) {
 
   function createPickRoutes() {
     const pick = express.Router();
-    const page = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public', 'pick.html');
+    const page = path.join(publicDir, 'pick.html');
     // The picker offers the boards the user can pin into, most recent first.
     const pickBoards = db.prepare(`${boardsSql(access.EDITS)} ${RECENT}`);
 

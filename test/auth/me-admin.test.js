@@ -1,6 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer } from '../helpers/server.js';
+import { startServer } from '../helpers/server.ts';
 
 describe('/api/me and admin-only routes', () => {
   let server, erin, admin;

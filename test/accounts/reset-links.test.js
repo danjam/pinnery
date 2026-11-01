@@ -1,8 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startServer } from '../helpers/server.js';
-import { linkFrom } from '../helpers/mail.js';
+import { startServer } from '../helpers/server.ts';
+import { linkFrom } from '../helpers/mail.ts';
 
 // POST /api/forgot with a Host header of our choosing (fetch won't let us set Host).
 function forgotWithHost(server, host, email) {
