@@ -1,5 +1,7 @@
 # Pinnery
 
+[![Coverage](https://coveralls.io/repos/github/danjam/pinnery/badge.svg?branch=master)](https://coveralls.io/github/danjam/pinnery?branch=master)
+
 Your own private Pinterest. Save images from anywhere into boards, browse them in a tidy grid, and share boards with the people you choose. It runs on your own server, so your pins stay yours.
 
 - **Boards** with cover images, a masonry grid and a full-screen viewer

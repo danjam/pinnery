@@ -37,3 +37,8 @@ jobs:
         if: always()
         run: |
           { echo '### Coverage (src/)'; echo '```'; npx c8 report; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # Coveralls keeps the history, comments the change on PRs and serves the README badge.
+      - uses: coverallsapp/github-action@v2
+        with:
+          file: coverage/lcov.info
+          format: lcov
