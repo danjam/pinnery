@@ -56,15 +56,12 @@ services:
       - ./data:/data                     # your images and database
     ports:
       - "3420:3420"
-    # Hardening: Pinnery only writes to /data, needs no Linux capabilities, and never needs more
-    # privileges than it starts with.
+    # Optional extra lockdown. Pinnery works with or without these lines.
     read_only: true
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
 ```
-
-The image has a built-in healthcheck, so Docker shows whether Pinnery is healthy without any extra setup.
 
 The container runs as user id 1000, so create the data folder with that owner first: `mkdir data && sudo chown 1000:1000 data`.
 
