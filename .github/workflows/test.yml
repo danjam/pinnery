@@ -28,7 +28,7 @@ jobs:
           docs=false
           if [ -s files.txt ] && ! grep -qvE '(\.md$|^docs/|^LICENSE$|^NOTICE$)' files.txt; then docs=true; fi
           echo "docs-only=$docs" >> "$GITHUB_OUTPUT"
-          echo "docs-only: $docs"; cat files.txt
+          echo "docs-only: $docs"
 
   test:
     needs: changes
