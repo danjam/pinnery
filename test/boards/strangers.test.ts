@@ -2,9 +2,11 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pngBuffer } from '../helpers/images.ts';
 import { setupBoards, upload } from '../helpers/boards.ts';
+import type { Boards } from '../helpers/boards.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
-let server;
-let owner, other, ids, board, pin;
+let server: Server;
+let owner: Client, other: Client, ids: Boards['ids'], board: Boards['board'], pin: Boards['pin'];
 
 describe('boards and access scoping', () => {
   before(async () => {
@@ -14,7 +16,7 @@ describe('boards and access scoping', () => {
 
   describe('a stranger (no share)', () => {
     it('sees nothing of the board in their list', async () => {
-      assert.ok(!(await other.get('/api/boards')).body.some((b) => b.id === board.id));
+      assert.ok(!(await other.get('/api/boards')).body.some((b: { id: number }) => b.id === board.id));
     });
 
     it('gets 404 (not 403) for every board and pin route', async () => {

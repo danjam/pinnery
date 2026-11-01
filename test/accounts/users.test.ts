@@ -1,11 +1,12 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 import { linkFrom, tokenFromLink } from '../helpers/mail.ts';
 import { userByEmail } from '../helpers/accounts.ts';
 
 describe('accounts (mail on)', () => {
-  let server, admin;
+  let server: MailServer, admin: Client;
   before(async () => {
     server = await startServer({ mail: true });
     admin = await server.adminClient();
@@ -13,7 +14,7 @@ describe('accounts (mail on)', () => {
   after(() => server.stop());
 
   describe('admin user management', () => {
-    let frank, frankToken;
+    let frank: Client, frankToken: string;
     before(async () => {
       frank = await server.createUser('frank@example.com', 'frank-pass-1');
       frankToken = await frank.mintToken('f');
@@ -22,11 +23,11 @@ describe('accounts (mail on)', () => {
     it('lists users with counts, admin only', async () => {
       const list = await admin.get('/api/users');
       assert.equal(list.status, 200);
-      const f = list.body.find((u) => u.email === 'frank@example.com');
+      const f = list.body.find((u: { email: string }) => u.email === 'frank@example.com');
       assert.equal(f.is_admin, false);
       assert.equal(typeof f.boards, 'number');
       assert.equal(typeof f.pins, 'number');
-      assert.ok(list.body.find((u) => u.email === 'admin@example.com').is_admin);
+      assert.ok(list.body.find((u: { email: string }) => u.email === 'admin@example.com').is_admin);
       assert.equal((await frank.get('/api/users')).status, 403);
       assert.equal((await server.anon().get('/api/users')).status, 401);
     });

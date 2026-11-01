@@ -1,11 +1,12 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 import { linkFrom, tokenFromLink } from '../helpers/mail.ts';
 import { BAD_TOKEN, expireLink } from '../helpers/accounts.ts';
 
 describe('accounts (mail on)', () => {
-  let server, admin;
+  let server: MailServer, admin: Client;
   before(async () => {
     server = await startServer({ mail: true });
     admin = await server.adminClient();
@@ -34,7 +35,7 @@ describe('accounts (mail on)', () => {
       assert.equal(link, body.link);
 
       const list = await admin.get('/api/invites');
-      assert.ok(list.body.some((i) => i.id === body.id && i.email === 'invitee@example.com'));
+      assert.ok(list.body.some((i: { id: number; email: string }) => i.id === body.id && i.email === 'invitee@example.com'));
 
       const token = tokenFromLink(link);
       const anon = server.anon();
@@ -52,7 +53,7 @@ describe('accounts (mail on)', () => {
       assert.equal(me.body.is_admin, false);
 
       // consumed: gone from the list, link dead, password works
-      assert.ok(!(await admin.get('/api/invites')).body.some((i) => i.id === body.id));
+      assert.ok(!(await admin.get('/api/invites')).body.some((i: { id: number; email: string }) => i.id === body.id));
       assert.equal((await server.anon({ ip: '127.0.0.20' }).get(`/api/signup/${token}`)).status, 404);
       assert.equal((await server.anon({ ip: '127.0.0.20' }).post(`/api/signup/${token}`, { display_name: 'Again', password: 'another-pass-1' })).status, 404);
       await server.login('invitee@example.com', 'invitee-pass-1', { ip: '127.0.0.21' });
@@ -62,7 +63,7 @@ describe('accounts (mail on)', () => {
       const { body } = await admin.post('/api/invites', { email: 'cancelled@example.com' });
       const token = tokenFromLink(body.link);
       assert.equal((await admin.del(`/api/invites/${body.id}`)).status, 200);
-      assert.ok(!(await admin.get('/api/invites')).body.some((i) => i.id === body.id));
+      assert.ok(!(await admin.get('/api/invites')).body.some((i: { id: number; email: string }) => i.id === body.id));
       const anon = server.anon({ ip: '127.0.0.22' });
       assert.equal((await anon.get(`/api/signup/${token}`)).status, 404);
       assert.equal((await anon.post(`/api/signup/${token}`, { display_name: 'C', password: 'cancelled-pass-1' })).status, 404);
@@ -98,7 +99,7 @@ describe('accounts (mail on)', () => {
       assert.equal((await anon.get(`/api/signup/${token}`)).status, 410);
       assert.equal((await anon.post(`/api/signup/${token}`, { display_name: 'L', password: 'late-pass-123' })).status, 410);
       // expired invites aren't listed as pending
-      assert.ok(!(await admin.get('/api/invites')).body.some((i) => i.id === body.id));
+      assert.ok(!(await admin.get('/api/invites')).body.some((i: { id: number; email: string }) => i.id === body.id));
       assert.equal((await anon.get('/api/me')).status, 401);
     });
 

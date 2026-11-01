@@ -2,14 +2,15 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
 const EXT_ID = 'abcdefghijklmnopabcdefghijklmnop';
 const REDIRECT = `https://${EXT_ID}.chromiumapp.org/`;
 const verifierFor = () => crypto.randomBytes(32).toString('base64url');
-const challengeFor = (v) => crypto.createHash('sha256').update(v).digest('base64url');
+const challengeFor = (v: string) => crypto.createHash('sha256').update(v).digest('base64url');
 
 describe('extension connect flow', () => {
-  let server, gina, verifier, challenge;
+  let server: Server, gina: Client, verifier: string, challenge: string;
   const params = (over = {}) => ({
     redirect_uri: REDIRECT,
     code_challenge_method: 'S256',
@@ -18,11 +19,11 @@ describe('extension connect flow', () => {
     name: 'My Chrome',
     ...over,
   });
-  const query = (p) => '?' + new URLSearchParams(p).toString();
-  const sameOrigin = { 'sec-fetch-site': 'same-origin' };
-  const decide = (client, body, headers = sameOrigin) => client.json('/connect/decide', { method: 'POST', json: body, headers });
-  const codeFrom = (redirect) => new URL(redirect).searchParams.get('code');
-  const exchange = (body, ip = '127.0.0.60') => server.anon({ ip }).post('/api/connect/token', body);
+  const query = (p: Record<string, string>) => '?' + new URLSearchParams(p).toString();
+  const sameOrigin: Record<string, string> = { 'sec-fetch-site': 'same-origin' };
+  const decide = (client: Client, body: unknown, headers = sameOrigin) => client.json('/connect/decide', { method: 'POST', json: body, headers });
+  const codeFrom = (redirect: string) => new URL(redirect).searchParams.get('code');
+  const exchange = (body: unknown, ip = '127.0.0.60') => server.anon({ ip }).post('/api/connect/token', body);
 
   before(async () => {
     server = await startServer();
@@ -99,7 +100,7 @@ describe('extension connect flow', () => {
     const u = new URL(r.body.redirect);
     assert.equal(u.searchParams.get('state'), 'state-123');
     const code = u.searchParams.get('code');
-    assert.match(code, /^[0-9a-f]{64}$/);
+    assert.match(code ?? '', /^[0-9a-f]{64}$/);
 
     const ex = await exchange({ code, code_verifier: verifier, redirect_uri: REDIRECT });
     assert.equal(ex.status, 201);
@@ -107,7 +108,7 @@ describe('extension connect flow', () => {
     assert.equal(ex.body.name, 'My Chrome');
     const viaToken = await server.bearer(ex.body.token).get('/api/me');
     assert.equal(viaToken.body.email, 'gina@example.com');
-    assert.ok((await gina.get('/api/tokens')).body.some((t) => t.name === 'My Chrome'));
+    assert.ok((await gina.get('/api/tokens')).body.some((t: { name: string }) => t.name === 'My Chrome'));
 
     const again = await exchange({ code, code_verifier: verifier, redirect_uri: REDIRECT });
     assert.equal(again.status, 400);

@@ -34,3 +34,5 @@ export async function setupBoards({ shared = false }: { shared?: boolean } = {})
 
   return { server, owner, editor, viewer, other, ids, board, pin, sharePath };
 }
+
+export type Boards = Awaited<ReturnType<typeof setupBoards>>;

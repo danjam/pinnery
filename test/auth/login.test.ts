@@ -1,13 +1,14 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
 const cookieRe = /^pinnery_session=[0-9a-f]{64}/;
 
 // Failed credential checks (shared budget of 10 per IP) always use their own IP so tests don't
 // eat each other's budget.
 describe('login and logout', () => {
-  let server, alice;
+  let server: Server, alice: Client;
   before(async () => {
     server = await startServer();
     alice = await server.createUser('alice@example.com', 'alice-password-1');
@@ -20,9 +21,9 @@ describe('login and logout', () => {
     assert.equal(status, 200);
     assert.deepEqual(body, { ok: true });
     const set = res.headers.getSetCookie().find((x) => x.startsWith('pinnery_session='));
-    assert.match(set, cookieRe);
-    assert.match(set, /HttpOnly/);
-    assert.match(set, /SameSite=Lax/);
+    assert.match(set ?? '', cookieRe);
+    assert.match(set ?? '', /HttpOnly/);
+    assert.match(set ?? '', /SameSite=Lax/);
     assert.equal((await c.get('/api/me')).body.email, 'alice@example.com');
   });
 
@@ -67,11 +68,11 @@ describe('login and logout', () => {
     assert.equal((await c.get('/api/me')).status, 200);
     const { status, res } = await c.post('/api/logout');
     assert.equal(status, 200);
-    assert.match(res.headers.getSetCookie().find((x) => x.startsWith('pinnery_session=')), /Max-Age=0/);
+    assert.match(res.headers.getSetCookie().find((x) => x.startsWith('pinnery_session=')) ?? '', /Max-Age=0/);
     assert.equal(c.cookie(), null);
     assert.equal((await c.get('/api/me')).status, 401);
     // the old cookie value is dead server-side, not just forgotten by the client
-    const replay = await server.anon().json('/api/me', { headers: { cookie: old } });
+    const replay = await server.anon().json('/api/me', { headers: { cookie: old! } });
     assert.equal(replay.status, 401);
   });
 

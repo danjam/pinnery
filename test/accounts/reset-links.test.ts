@@ -2,13 +2,18 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { startServer } from '../helpers/server.ts';
+import type { MailServer, Server } from '../helpers/server.ts';
 import { linkFrom } from '../helpers/mail.ts';
 
 // POST /api/forgot with a Host header of our choosing (fetch won't let us set Host).
-function forgotWithHost(server, host, email) {
+interface ForgotReply {
+  status: number | undefined;
+  body: { ok?: boolean };
+}
+function forgotWithHost(server: Server, host: string, email: string): Promise<ForgotReply> {
   const { port } = new URL(server.url);
   const body = JSON.stringify({ email });
-  return new Promise((resolve, reject) => {
+  return new Promise<ForgotReply>((resolve, reject) => {
     const req = http.request({ host: '127.0.0.1', port, path: '/api/forgot', method: 'POST',
       headers: { Host: host, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
       let data = '';
@@ -22,7 +27,7 @@ function forgotWithHost(server, host, email) {
 
 describe('reset links and the Host header', () => {
   describe('with PINNERY_PUBLIC_URL set', () => {
-    let server;
+    let server: MailServer;
     before(async () => {
       server = await startServer({ mail: true });
       await server.createUser('victim@example.com', 'victim-pass-1');
@@ -40,7 +45,7 @@ describe('reset links and the Host header', () => {
   });
 
   describe('with mail on but no PINNERY_PUBLIC_URL', () => {
-    let server;
+    let server: MailServer;
     before(async () => {
       server = await startServer({ mail: true, env: { PINNERY_PUBLIC_URL: '' } });
       await server.createUser('victim@example.com', 'victim-pass-1');

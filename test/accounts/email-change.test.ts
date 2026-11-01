@@ -1,10 +1,11 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Client, MailServer } from '../helpers/server.ts';
 import { linkFrom, tokenFromLink } from '../helpers/mail.ts';
 
 describe('accounts (mail on)', () => {
-  let server, admin;
+  let server: MailServer, admin: Client;
   before(async () => {
     server = await startServer({ mail: true });
     admin = await server.adminClient();
@@ -14,7 +15,7 @@ describe('accounts (mail on)', () => {
   after(() => server.stop());
 
   describe('email change', () => {
-    let carol;
+    let carol: Client;
     before(async () => { carol = await server.createUser('carol@example.com', 'carol-pass-1'); });
 
     it('needs a cookie session and the right password', async () => {

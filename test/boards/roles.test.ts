@@ -2,9 +2,11 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { pngBuffer } from '../helpers/images.ts';
 import { setupBoards, upload } from '../helpers/boards.ts';
+import type { Boards } from '../helpers/boards.ts';
+import type { Client, Server } from '../helpers/server.ts';
 
-let server;
-let owner, editor, viewer, other, ids, board, pin, sharePath;
+let server: Server;
+let owner: Client, editor: Client, viewer: Client, other: Client, ids: Boards['ids'], board: Boards['board'], pin: Boards['pin'], sharePath: Boards['sharePath'];
 
 describe('boards and access scoping', () => {
   before(async () => {
@@ -17,7 +19,7 @@ describe('boards and access scoping', () => {
       const { status, body } = await viewer.get(`/api/boards/${board.id}/pins`);
       assert.equal(status, 200);
       assert.equal(body.board.role, 'viewer');
-      assert.deepEqual(body.pins.map((p) => p.id), [pin.id]);
+      assert.deepEqual(body.pins.map((p: { id: number }) => p.id), [pin.id]);
       assert.equal((await viewer.get(`/api/pins/${pin.id}`)).status, 200);
       const original = await viewer.fetch(`/i/${pin.sha256}`);
       assert.equal(original.status, 200);
@@ -50,14 +52,14 @@ describe('boards and access scoping', () => {
   });
 
   describe('editor', () => {
-    let added;
+    let added: { id: number; sha256: string };
 
     it('adds pins to the shared board, owner sees them', async () => {
       const res = await upload(editor, board.id, await pngBuffer({ color: '#445566' }), '&name=from-editor');
       assert.equal(res.status, 201);
       added = res.body;
       const pins = (await owner.get(`/api/boards/${board.id}/pins`)).body.pins;
-      assert.ok(pins.some((p) => p.id === added.id && p.page_title === 'from-editor'));
+      assert.ok(pins.some((p: { id: number; page_title: string }) => p.id === added.id && p.page_title === 'from-editor'));
       assert.equal((await viewer.fetch(`/i/${added.sha256}`)).status, 200);
       assert.equal((await other.fetch(`/i/${added.sha256}`)).status, 404);
     });
@@ -85,7 +87,7 @@ describe('boards and access scoping', () => {
       const res = await editor.post('/api/pins/move', { ids: [p.id], board_id: board.id });
       assert.equal(res.status, 200);
       assert.equal(res.body.moved, 1);
-      assert.ok((await viewer.get(`/api/boards/${board.id}/pins`)).body.pins.some((x) => x.id === p.id));
+      assert.ok((await viewer.get(`/api/boards/${board.id}/pins`)).body.pins.some((x: { id: number }) => x.id === p.id));
       await owner.post('/api/pins/delete', { ids: [p.id] });
     });
 

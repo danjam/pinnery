@@ -1,26 +1,27 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Server } from '../helpers/server.ts';
 
 const EMAIL = 'proxy@example.com';
 const PASSWORD = 'proxy-pass-1';
 
 // Ten failed logins, each claiming a different client IP via X-Forwarded-For.
-async function failFromFakeIps(server) {
+async function failFromFakeIps(server: Server) {
   for (let i = 0; i < 10; i++) {
     const c = server.anon({ ip: `127.0.1.${i + 1}` });
     assert.equal((await c.post('/api/login', { email: EMAIL, password: `wrong-${i}` })).status, 401);
   }
 }
 
-const loginOverHttps = (server) => server.anon().fetch('/api/login', {
+const loginOverHttps = (server: Server) => server.anon().fetch('/api/login', {
   method: 'POST',
   json: { email: EMAIL, password: PASSWORD },
   headers: { 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '127.0.2.1' },
 });
 
 describe('PINNERY_PROXIES unset (one proxy)', () => {
-  let server;
+  let server: Server;
   before(async () => {
     server = await startServer();
     await server.createUser(EMAIL, PASSWORD);
@@ -42,7 +43,7 @@ describe('PINNERY_PROXIES unset (one proxy)', () => {
 });
 
 describe('PINNERY_PROXIES=0', () => {
-  let server;
+  let server: Server;
   before(async () => {
     server = await startServer({ env: { PINNERY_PROXIES: '0' } });
     await server.createUser(EMAIL, PASSWORD);

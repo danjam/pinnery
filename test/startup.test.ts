@@ -1,16 +1,19 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
+import type { Readable } from 'node:stream';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { startServer } from './helpers/server.ts';
+import type { Server } from './helpers/server.ts';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 describe('startup', () => {
-  let server, dataDir, child;
+  let server: Server, dataDir: string, child: ChildProcessByStdio<null, Readable, Readable> | undefined;
   before(async () => {
     server = await startServer();
     dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
@@ -29,11 +32,12 @@ describe('startup', () => {
       PINNERY_ADMIN_EMAIL: 'admin@example.com',
       PINNERY_PASSWORD: 'initial-pass-1',
     };
-    child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    child = proc;
     let out = '';
-    child.stdout.on('data', (d) => { out += d; });
-    child.stderr.on('data', (d) => { out += d; });
-    const code = await new Promise((resolve) => child.once('exit', resolve));
+    proc.stdout.on('data', (d) => { out += d; });
+    proc.stderr.on('data', (d) => { out += d; });
+    const code = await new Promise((resolve) => proc.once('exit', resolve));
     assert.equal(code, 1);
     assert.match(out, /can't listen on :\d+: .*EADDRINUSE/);
     assert.doesNotMatch(out, /listening on/);
@@ -76,7 +80,7 @@ describe('shutdown', () => {
     const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => child.kill('SIGKILL'));
     let out = '';
-    const listening = new Promise((resolve) => {
+    const listening = new Promise<void>((resolve) => {
       child.stdout.on('data', (d) => { out += d; if (out.includes('listening on')) resolve(); });
     });
     child.stderr.on('data', (d) => { out += d; });

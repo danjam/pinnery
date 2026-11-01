@@ -1,9 +1,10 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
+import type { Server } from '../helpers/server.ts';
 
 describe('login throttle', () => {
-  let server;
+  let server: Server;
   before(async () => {
     server = await startServer();
     await server.createUser('throttle@example.com', 'throttle-pass-1');

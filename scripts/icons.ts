@@ -1,4 +1,4 @@
-// Render the extension icons from the app mark. Run: node scripts/icons.mjs
+// Render the extension icons from the app mark. Run: node scripts/icons.ts
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
