@@ -15,9 +15,9 @@
       "schedule": ["* 0-5 * * 1"]
     },
     {
-      "description": "@types/node follows the Node major the image runs (24), not the latest",
+      "description": "@types/node follows the Node major the image runs (26), not the latest",
       "matchPackageNames": ["@types/node"],
-      "allowedVersions": "<25"
+      "allowedVersions": "<27"
     }
   ]
 }

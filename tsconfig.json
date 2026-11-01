@@ -1,5 +1,5 @@
 {
-  // The server, tests and scripts: run by Node 24 directly. The web app (src/public) and the
+  // The server, tests and scripts: run by Node directly. The web app (src/public) and the
   // extension have their own tsconfig.json, for the browser.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
