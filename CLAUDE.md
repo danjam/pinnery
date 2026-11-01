@@ -6,10 +6,11 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 
 ## Commands
 
-- Build: `npm run build` (`scripts/build.ts`) bundles the web app (`src/public`) and the extension (`extension/`) into `dist/` with esbuild; the server serves `dist/`, so rebuild after changing either. `npm start` and `npm test` build first. Entry points come from the pages' `<script src>` tags and the extension manifest, so a new script needs no build change.
+- Build: `npm run build` (`scripts/build.ts`) bundles the web app (`src/public`) and the extension (`extension/`) into `dist/` with esbuild; the server serves `dist/`, so rebuild after changing either. `npm start`, `npm test` and `npm run e2e` build first. Entry points come from the pages' `<script src>` tags and the extension manifest, so a new script needs no build change.
 - Run: `PINNERY_ADMIN_EMAIL=admin@example.com PINNERY_PASSWORD=test-pass-1 DATA_DIR=<tmp> PORT=<port> node src/server.ts`
 - Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public`, its service worker (`tsconfig.sw.json`) and `extension`). CI runs it before the tests.
 - Test: `npm test` (node --test). Tests live in `test/<area>/` (accounts, auth, boards, pins), plus a few at the top level. Each file boots its own server with `startServer()` from `test/helpers/server.ts`; its header explains the clients and the sign-in throttle budget the tests share. Exercise UI changes against a throwaway instance.
+- Browser tests: `npm run e2e` (Playwright, Chromium; builds first). Specs live in `e2e/*.spec.ts`; `e2e/fixtures.ts` gives each worker a server from the same harness and a signed-in `user`. Sign in through the API (`signIn`), not the form, except in `auth.spec.ts`. First time: `npx playwright install chromium`. CI runs it as an optional `e2e` job.
 - Coverage: `npm run coverage` runs the tests under c8 and prints coverage of `src/` (server only; config in `.c8rc.json`). CI shows it in the job summary and uploads it to Coveralls (history, PR changes, the README badge).
 - `node scripts/icons.ts` regenerates extension/app icons from `src/public/icon.svg`.
 
