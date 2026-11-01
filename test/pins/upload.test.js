@@ -1,9 +1,9 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { startServer } from '../helpers/server.js';
-import { jpegBuffer, pngBuffer } from '../helpers/images.js';
-import { newBoard, originalFile, rawPost, upload } from '../helpers/pins.js';
+import { startServer } from '../helpers/server.ts';
+import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
+import { newBoard, originalFile, rawPost, upload } from '../helpers/pins.ts';
 
 describe('pins', () => {
   let server, alice, bob, board;

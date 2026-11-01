@@ -13,6 +13,11 @@
       "matchManagers": ["dockerfile"],
       "matchUpdateTypes": ["digest"],
       "schedule": ["* 0-5 * * 1"]
+    },
+    {
+      "description": "@types/node follows the Node major the image runs (24), not the latest",
+      "matchPackageNames": ["@types/node"],
+      "allowedVersions": "<25"
     }
   ]
 }

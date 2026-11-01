@@ -1,28 +1,31 @@
 import assert from 'node:assert/strict';
-import { startServer } from './server.js';
-import { pngBuffer } from './images.js';
+import { startServer } from './server.ts';
+import type { Client } from './server.ts';
+import { pngBuffer } from './images.ts';
 
-export const upload = (client, boardId, buf, query = '') =>
+export const upload = (client: Client, boardId: number | string, buf: Buffer, query = '') =>
   client.json(`/api/pins/upload?board_id=${boardId}${query}`, { method: 'POST', body: buf, headers: { 'content-type': 'application/octet-stream' } });
+
+type Role = 'owner' | 'editor' | 'viewer' | 'other';
 
 // Starts a server with owner / editor / viewer / other (never shared with), the owner's
 // board 'Inspiration' and one pin on it. With { shared: true }, also shares the board
 // with viewer (viewer role) and editor (editor role).
-export async function setupBoards({ shared = false } = {}) {
+export async function setupBoards({ shared = false }: { shared?: boolean } = {}) {
   const server = await startServer();
   const owner = await server.createUser('owner@example.com', 'owner-password-1', { displayName: 'Olive Owner' });
   const editor = await server.createUser('editor@example.com', 'editor-password-1', { displayName: 'Edie Editor' });
   const viewer = await server.createUser('viewer@example.com', 'viewer-password-1', { displayName: 'Vic Viewer' });
   const other = await server.createUser('other@example.com', 'other-password-1', { displayName: 'Otto Other' });
-  const ids = {};
-  for (const [k, c] of Object.entries({ owner, editor, viewer, other })) ids[k] = (await c.get('/api/me')).body.id;
+  const ids = {} as Record<Role, number>;
+  for (const [k, c] of (Object.entries({ owner, editor, viewer, other }) as [Role, Client][])) ids[k] = (await c.get('/api/me')).body.id;
 
   const board = (await owner.post('/api/boards', { name: 'Inspiration' })).body;
   const res = await upload(owner, board.id, await pngBuffer({ color: '#112233' }), '&name=first');
   assert.equal(res.status, 201);
   const pin = res.body;
 
-  const sharePath = (who) => `/api/boards/${board.id}/shares/${ids[who]}`;
+  const sharePath = (who: Role) => `/api/boards/${board.id}/shares/${ids[who]}`;
 
   if (shared) {
     assert.equal((await owner.json(sharePath('viewer'), { method: 'PUT', json: { role: 'viewer' } })).status, 200);

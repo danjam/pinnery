@@ -1,7 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { pngBuffer } from '../helpers/images.js';
-import { setupBoards, upload } from '../helpers/boards.js';
+import { pngBuffer } from '../helpers/images.ts';
+import { setupBoards, upload } from '../helpers/boards.ts';
 
 let server;
 let owner, editor, viewer, other, ids, board, pin, sharePath;

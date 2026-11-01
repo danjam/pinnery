@@ -1,0 +1,16 @@
+{
+  // The server, tests and scripts: run by Node 24 directly. The web app (src/public) and the
+  // extension have their own tsconfig.json, for the browser.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "lib": ["es2024"],
+    "types": ["node"],
+    // Until the server and tests are converted: their .js is accepted but not checked.
+    "allowJs": true,
+    "checkJs": false
+  },
+  "include": ["src", "test", "scripts"],
+  "exclude": ["src/public"]
+}

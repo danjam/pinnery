@@ -7,3 +7,4 @@ PLAN.md
 .gitignore
 compose.yaml
 README.md
+dist

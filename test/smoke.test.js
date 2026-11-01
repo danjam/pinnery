@@ -1,9 +1,9 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import { startServer } from './helpers/server.js';
-import { linkFrom, tokenFromLink } from './helpers/mail.js';
-import { jpegBuffer, pngBuffer } from './helpers/images.js';
+import { startServer } from './helpers/server.ts';
+import { linkFrom, tokenFromLink } from './helpers/mail.ts';
+import { jpegBuffer, pngBuffer } from './helpers/images.ts';
 
 describe('harness (mail off)', () => {
   let server;

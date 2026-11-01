@@ -4,12 +4,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startMailSink, tokenFromLink } from './mail.js';
+import { startMailSink, tokenFromLink } from './mail.ts';
+import type { MailSink } from './mail.ts';
 
 // Harness for API tests: each startServer() boots a real, isolated Pinnery (own data dir, own
 // port) and hands back clients that are already signed in.
 //
-//   import { startServer } from './helpers/server.js';
+//   import { startServer } from './helpers/server.ts';
 //   const server = await startServer({ mail: true });
 //   const admin = await server.adminClient();
 //   const bob = await server.createUser('bob@example.com', 'bob-password-1');
@@ -34,43 +35,64 @@ export const ADMIN_EMAIL = 'admin@example.com';
 const INITIAL_PASSWORD = 'initial-pass-1';       // PINNERY_PASSWORD: must be changed at first sign-in
 const ADMIN_PASSWORD = 'admin-pass-changed-1';   // what adminClient() changes it to
 
-const freePort = () => new Promise((resolve, reject) => {
+const freePort = (): Promise<number> => new Promise((resolve, reject) => {
   const s = net.createServer();
   s.once('error', reject);
   s.listen(0, '127.0.0.1', () => {
-    const { port } = s.address();
+    const { port } = s.address() as net.AddressInfo;
     s.close(() => resolve(port));
   });
 });
 
-/**
- * A client for one identity. Credentials are sent automatically.
- * @typedef {object} Client
- * @property {string|null} email   Who it signs in as (null for anonymous / bearer-only).
- * @property {string|null} password  Their current password, kept for mintToken().
- * @property {(path: string, init?: RequestInit & { json?: any }) => Promise<Response>} fetch
- *   fetch() against the server. `path` is relative ('/api/me'). `init.json` is sent as a JSON
- *   body. Redirects are NOT followed (redirect: 'manual') unless init says otherwise.
- * @property {(path: string, init?: RequestInit & { json?: any }) => Promise<{ status: number, body: any, res: Response }>} json
- *   Like fetch, but reads the response: `body` is the parsed JSON, or null if it isn't JSON.
- * @property {(path: string) => Promise<{ status: number, body: any, res: Response }>} get
- * @property {(path: string, body?: any) => Promise<{ status: number, body: any, res: Response }>} post
- * @property {(path: string, body?: any) => Promise<{ status: number, body: any, res: Response }>} patch
- * @property {(path: string) => Promise<{ status: number, body: any, res: Response }>} del
- * @property {(name?: string) => Promise<string>} mintToken
- *   Create an API token (POST /api/tokens) with this client's email + password and return it.
- * @property {() => string|null} cookie  The current session cookie header value, if any.
- */
+export type RequestOpts = RequestInit & { json?: unknown };
+// `body` is the parsed JSON, or null if the response isn't JSON. It is `any` because the API's
+// response shapes are not modelled here and the (JS) tests index into it freely.
+export interface JsonResult {
+  status: number;
+  body: any;
+  res: Response;
+}
+
+/** A client for one identity. Credentials are sent automatically. */
+export interface Client {
+  /** Who it signs in as (null for anonymous / bearer-only). */
+  email: string | null;
+  /** Their current password, kept for mintToken(). */
+  password: string | null;
+  /**
+   * fetch() against the server. `path` is relative ('/api/me'). `init.json` is sent as a JSON
+   * body. Redirects are NOT followed (redirect: 'manual') unless init says otherwise.
+   */
+  fetch: (path: string, init?: RequestOpts) => Promise<Response>;
+  /** Like fetch, but reads the response: `body` is the parsed JSON, or null if it isn't JSON. */
+  json: (path: string, init?: RequestOpts) => Promise<JsonResult>;
+  get: (path: string) => Promise<JsonResult>;
+  post: (path: string, body?: unknown) => Promise<JsonResult>;
+  patch: (path: string, body?: unknown) => Promise<JsonResult>;
+  del: (path: string) => Promise<JsonResult>;
+  /** Create an API token (POST /api/tokens) with this client's email + password and return it. */
+  mintToken: (name?: string) => Promise<string>;
+  /** The current session cookie header value, if any. */
+  cookie: () => string | null;
+}
+
+interface ClientOpts {
+  cookie?: string | null;
+  token?: string | null;
+  email?: string | null;
+  password?: string | null;
+  ip?: string | null;
+}
 
 // Transport: the session COOKIE. Bearer tokens are the other option, but they can't do everything:
 // /api/password and /api/email require a browser session (kind 'session'), POST /api/tokens needs
 // the password anyway, and a cookie is what the web app itself uses. Anything a bearer token can
 // do, a cookie can too. For bearer-specific tests use server.bearer(token) (from
 // client.mintToken()).
-function makeClient(base, { cookie = null, token = null, email = null, password = null, ip = null } = {}) {
-  const state = { cookie };
+function makeClient(base: string, { cookie = null, token = null, email = null, password = null, ip = null }: ClientOpts = {}): Client {
+  const state: { cookie: string | null } = { cookie };
 
-  async function doFetch(p, init = {}) {
+  async function doFetch(p: string, init: RequestOpts = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     if (init.json !== undefined) {
       headers.set('content-type', 'application/json');
@@ -90,23 +112,23 @@ function makeClient(base, { cookie = null, token = null, email = null, password 
     return res;
   }
 
-  async function doJson(p, init) {
+  async function doJson(p: string, init?: RequestOpts): Promise<JsonResult> {
     const res = await doFetch(p, init);
     const text = await res.text();
-    let body = null;
+    let body: unknown = null;
     try { body = text ? JSON.parse(text) : null; } catch { /* not JSON */ }
     return { status: res.status, body, res };
   }
 
-  const client = {
+  const client: Client = {
     email,
     password,
     fetch: doFetch,
     json: doJson,
-    get: (p) => doJson(p),
-    post: (p, body) => doJson(p, { method: 'POST', ...(body !== undefined && { json: body }) }),
-    patch: (p, body) => doJson(p, { method: 'PATCH', json: body }),
-    del: (p) => doJson(p, { method: 'DELETE' }),
+    get: (p: string) => doJson(p),
+    post: (p: string, body?: unknown) => doJson(p, { method: 'POST', ...(body !== undefined && { json: body }) }),
+    patch: (p: string, body?: unknown) => doJson(p, { method: 'PATCH', json: body }),
+    del: (p: string) => doJson(p, { method: 'DELETE' }),
     cookie: () => state.cookie,
     async mintToken(name = 'test') {
       const { status, body } = await doJson('/api/tokens', { method: 'POST', json: { email: client.email, password: client.password, name } });
@@ -117,24 +139,33 @@ function makeClient(base, { cookie = null, token = null, email = null, password 
   return client;
 }
 
+export interface StartOpts {
+  /** Extra/overriding environment variables (e.g. { PINNERY_PUBLIC_URL: '...' }). */
+  env?: Record<string, string>;
+  /** Also start the SMTP sink and point the server at it. */
+  mail?: boolean;
+}
+
+export interface IpOpts {
+  ip?: string;
+}
+
+export interface Server {
+  url: string;
+  dataDir: string;
+  adminEmail: string;
+  output: () => string;
+  mail: MailSink | undefined;
+  anon: (opts?: IpOpts) => Client;
+  login: (email: string, password: string, opts?: IpOpts) => Promise<Client>;
+  bearer: (token: string, opts?: IpOpts) => Client;
+  adminClient: () => Promise<Client>;
+  createUser: (email: string, password: string, opts?: { displayName?: string }) => Promise<Client>;
+  stop: () => Promise<void>;
+}
+
 /**
  * Boot an isolated Pinnery.
- * @param {{ env?: Record<string, string>, mail?: boolean }} [opts]
- *   env: extra/overriding environment variables (e.g. { PINNERY_PUBLIC_URL: '...' }).
- *   mail: also start the SMTP sink and point the server at it.
- * @returns {Promise<{
- *   url: string,
- *   dataDir: string,
- *   adminEmail: string,
- *   output: () => string,
- *   mail: import('./mail.js').MailSink | undefined,
- *   anon: (opts?: { ip?: string }) => Client,
- *   login: (email: string, password: string, opts?: { ip?: string }) => Promise<Client>,
- *   bearer: (token: string, opts?: { ip?: string }) => Client,
- *   adminClient: () => Promise<Client>,
- *   createUser: (email: string, password: string, opts?: { displayName?: string }) => Promise<Client>,
- *   stop: () => Promise<void>,
- * }>}
  *
  * - output(): everything the server printed to stdout/stderr so far.
  * - anon(): unauthenticated client (also useful for 401 checks).
@@ -149,25 +180,34 @@ function makeClient(base, { cookie = null, token = null, email = null, password 
  * - stop(): kill the server, wait for it to exit, delete the data dir and close the sink.
  *   Idempotent.
  */
-export async function startServer(opts = {}) {
+export async function startServer(opts: StartOpts = {}): Promise<Server> {
   // freePort() releases the port before the server binds it, so a test file running in parallel
   // can rarely grab it first. Then our server exits with EADDRINUSE: try again on a new port.
   for (let attempt = 1; ; attempt++) {
     try {
       return await startOnce(opts);
     } catch (err) {
-      if (!err.portInUse || attempt === 5) throw err;
+      if (!(err instanceof StartupError && err.portInUse) || attempt === 5) throw err;
     }
   }
 }
 
-async function startOnce({ env = {}, mail = false }) {
+// Thrown when the server exits during startup; portInUse marks the EADDRINUSE race.
+class StartupError extends Error {
+  portInUse: boolean;
+  constructor(message: string, portInUse: boolean) {
+    super(message);
+    this.portInUse = portInUse;
+  }
+}
+
+async function startOnce({ env = {}, mail = false }: StartOpts): Promise<Server> {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
   const port = await freePort();
   const sink = mail ? await startMailSink() : undefined;
 
   // A clean slate: nothing from the developer's own PINNERY_* / DATA_DIR / PORT leaks in.
-  const childEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(PINNERY_|DATA_DIR$|PORT$)/.test(k)));
+  const childEnv: Record<string, string | undefined> = Object.fromEntries(Object.entries(process.env).filter(([k]) => !/^(PINNERY_|DATA_DIR$|PORT$)/.test(k)));
   Object.assign(childEnv, {
     DATA_DIR: dataDir,
     PORT: String(port),
@@ -188,11 +228,11 @@ async function startOnce({ env = {}, mail = false }) {
 
   let out = '';
   const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
-  const collect = (d) => { out += d; };
+  const collect = (d: Buffer | string): void => { out += d; };
   child.stdout.on('data', collect);
   child.stderr.on('data', collect);
   let exited = false;
-  const exitPromise = new Promise((resolve) => child.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); }));
+  const exitPromise = new Promise<unknown>((resolve) => child.once('exit', (code, signal) => { exited = true; resolve({ code, signal }); }));
   const killOnExit = () => { if (!exited) child.kill('SIGKILL'); };
   process.once('exit', killOnExit); // don't orphan servers if a test run dies
 
@@ -219,9 +259,7 @@ async function startOnce({ env = {}, mail = false }) {
   for (;;) {
     if (exited) {
       await stop();
-      const err = new Error(`server exited during startup\n--- server output ---\n${out}`);
-      err.portInUse = out.includes('EADDRINUSE');
-      throw err;
+      throw new StartupError(`server exited during startup\n--- server output ---\n${out}`, out.includes('EADDRINUSE'));
     }
     try {
       if (out.includes(`listening on :${port}`) && (await fetch(`${url}/healthz`)).ok) break;
@@ -233,10 +271,10 @@ async function startOnce({ env = {}, mail = false }) {
     await new Promise((r) => setTimeout(r, 50));
   }
 
-  const anon = ({ ip } = {}) => makeClient(url, { ip });
-  const bearer = (token, { ip } = {}) => makeClient(url, { token, ip });
+  const anon = ({ ip }: IpOpts = {}) => makeClient(url, { ip });
+  const bearer = (token: string, { ip }: IpOpts = {}) => makeClient(url, { token, ip });
 
-  async function login(email, password, { ip } = {}) {
+  async function login(email: string, password: string, { ip }: IpOpts = {}): Promise<Client> {
     const client = makeClient(url, { email, password, ip });
     const { status, body } = await client.post('/api/login', { email, password });
     if (status !== 200) throw new Error(`login as ${email} failed: ${status} ${JSON.stringify(body)}`);
@@ -245,8 +283,8 @@ async function startOnce({ env = {}, mail = false }) {
 
   // First admin sign-in: PINNERY_PASSWORD only works to get in, then everything but
   // /api/password is closed (403 password_change_required) until a new password is set.
-  let admin;
-  const adminClient = () => admin ??= (async () => {
+  let admin: Promise<Client> | undefined;
+  const adminClient = (): Promise<Client> => admin ??= (async () => {
     const client = await login(ADMIN_EMAIL, INITIAL_PASSWORD);
     const { status, body } = await client.post('/api/password', { current: INITIAL_PASSWORD, new: ADMIN_PASSWORD });
     if (status !== 200) throw new Error(`admin password change failed: ${status} ${JSON.stringify(body)}`);
@@ -254,7 +292,7 @@ async function startOnce({ env = {}, mail = false }) {
     return client;
   })().catch((err) => { admin = undefined; throw err; }); // don't cache a failure
 
-  async function createUser(email, password, { displayName } = {}) {
+  async function createUser(email: string, password: string, { displayName }: { displayName?: string } = {}): Promise<Client> {
     const adminC = await adminClient();
     const invite = await adminC.post('/api/invites', { email });
     if (invite.status !== 201) throw new Error(`invite for ${email} failed: ${invite.status} ${JSON.stringify(invite.body)}`);

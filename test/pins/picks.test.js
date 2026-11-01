@@ -1,8 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer } from '../helpers/server.js';
-import { pngBuffer } from '../helpers/images.js';
-import { newBoard, rawPost } from '../helpers/pins.js';
+import { startServer } from '../helpers/server.ts';
+import { pngBuffer } from '../helpers/images.ts';
+import { newBoard, rawPost } from '../helpers/pins.ts';
 
 const tok = (pick) => pick.token;
 

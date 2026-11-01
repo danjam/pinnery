@@ -1,8 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { startServer } from '../helpers/server.js';
-import { linkFrom, tokenFromLink } from '../helpers/mail.js';
-import { BAD_TOKEN, expireLink, userByEmail } from '../helpers/accounts.js';
+import { startServer } from '../helpers/server.ts';
+import { linkFrom, tokenFromLink } from '../helpers/mail.ts';
+import { BAD_TOKEN, expireLink, userByEmail } from '../helpers/accounts.ts';
 
 describe('accounts (mail on)', () => {
   let server, admin;

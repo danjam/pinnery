@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startServer } from './helpers/server.js';
+import { startServer } from './helpers/server.ts';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'public');
 

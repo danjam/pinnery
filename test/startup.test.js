@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { startServer } from './helpers/server.js';
+import { startServer } from './helpers/server.ts';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 

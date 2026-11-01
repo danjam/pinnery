@@ -6,9 +6,15 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 
 ## Commands
 
+- Build: `npm run build` (`scripts/build.ts`) bundles the web app (`src/public`) and the extension (`extension/`) into `dist/` with esbuild; the server serves `dist/`, so rebuild after changing either. `npm start` and `npm test` build first. Entry points come from the pages' `<script src>` tags and the extension manifest, so a new script needs no build change.
 - Run: `PINNERY_ADMIN_EMAIL=admin@example.com PINNERY_PASSWORD=test-pass-1 DATA_DIR=<tmp> PORT=<port> node src/server.js`
-- No build step: check syntax with `node --check <file>` and exercise changes against a throwaway instance.
+- Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public` and `extension`). CI runs it before the tests.
+- Test: `npm test` (node --test). Exercise UI changes against a throwaway instance.
 - `node scripts/icons.mjs` regenerates extension/app icons from `src/public/icon.svg`.
+
+## TypeScript
+
+Node runs the server's `.ts` files directly by stripping the types, so only erasable syntax is allowed: no enums, namespaces or parameter properties. Import types with `import type`, and write relative imports with the real extension (`./db.ts`). The browser code is bundled by esbuild, which also only strips types; `tsc` is what checks them.
 
 ## Releases
 

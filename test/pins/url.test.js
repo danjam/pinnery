@@ -1,9 +1,9 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { startServer } from '../helpers/server.js';
-import { pngBuffer } from '../helpers/images.js';
-import { newBoard } from '../helpers/pins.js';
+import { startServer } from '../helpers/server.ts';
+import { pngBuffer } from '../helpers/images.ts';
+import { newBoard } from '../helpers/pins.ts';
 
 // A tiny upstream serving a PNG, a text file, a redirect and a 404.
 async function startUpstream(png) {

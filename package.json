@@ -7,7 +7,11 @@
   "type": "module",
   "main": "src/server.js",
   "scripts": {
+    "build": "node scripts/build.ts",
+    "typecheck": "tsc -p . && tsc -p src/public && tsc -p extension",
+    "prestart": "npm run build",
     "start": "node src/server.js",
+    "pretest": "npm run build",
     "test": "node --test \"test/**/*.test.js\""
   },
   "engines": {
@@ -19,5 +23,13 @@
     "nodemailer": "10.3.1",
     "request-filtering-agent": "^3.2.1",
     "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/chrome": "^0.3.7",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.19.2",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
   }
 }
