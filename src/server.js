@@ -19,10 +19,15 @@ const ADMIN_EMAIL = process.env.PINNERY_ADMIN_EMAIL;
 const PUBLIC_URL = process.env.PINNERY_PUBLIC_URL || '';
 // Express "trust proxy": whose X-Forwarded-For/-Proto to believe for the client's IP (throttles) and
 // HTTPS (Secure cookie, link scheme). Default 1: the reverse proxy in front. 'false' when there's
-// none, or else anyone can claim any IP. Also takes a hop count or proxy IPs/CIDRs.
+// none, or else anyone can claim any IP. Also takes a hop count or proxy IPs/CIDRs. Not 'true':
+// Express would then trust every hop and take the client's own leftmost X-Forwarded-For.
 const TRUST_PROXY = (() => {
   const v = (process.env.PINNERY_TRUST_PROXY || '1').trim();
-  if (v === 'true' || v === 'false') return v === 'true';
+  if (v === 'true') {
+    console.error('PINNERY_TRUST_PROXY=true would let any client fake its IP; use 1 (one proxy) or your proxy\'s address — refusing to start');
+    process.exit(1);
+  }
+  if (v === 'false') return false;
   return /^\d+$/.test(v) ? Number(v) : v;
 })();
 
