@@ -716,8 +716,8 @@ function renderBoardHeader() {
       { label: 'Settings', icon: 'cog-outline', onclick: () => navigate('/settings') },
       { label: 'Sign out', icon: 'logout', onclick: signOut },
     ]),
-  // Known bug, kept as it was: for viewers the two canAdd() items are false, which
-  // replaceChildren renders as the text "false". The cast hides that from tsc.
+  // For viewers the two canAdd() items are false, which replaceChildren renders as text (#50).
+  // The cast hides that from tsc until it's fixed.
   ] as (Node | string)[]);
   selMove.hidden = !isOwner(b);
 }
