@@ -10,7 +10,7 @@ import { normaliseEmail, validEmail, verifyHash } from './util.ts';
 // ---- email change ----
 export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mailer) {
   const { getUser, getUserByEmail, throttled, recordFailure } = core;
-  const { baseUrl, deleteLink, deleteUserLinks, issueLink, lookupLink } = links;
+  const { baseUrl, deleteLink, deleteUserLinks, issueLink, lookupLink, sendQuietly } = links;
 
   // POST /api/email — body { email, password }, signed in. Sends a confirmation to the new address;
   // nothing changes until it's used. Needs mail: a link to copy would go to the wrong person.
@@ -52,16 +52,25 @@ export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mail
     if (row) res.json({ email: row.email });
   }
 
+  // Reset links went to the old address, so they're cancelled, and the old address is told: if the
+  // change wasn't the owner's doing, that's the only warning they get.
   function confirmEmail(req: Request, res: Response) {
     const row = lookupLink(req, res, 'email_change', 'confirmation');
     if (!row) return;
-    const ok = db.transaction(() => {
-      if (getUserByEmail.get(row.email)) return false;
+    const old = db.transaction(() => {
+      const user = getUser.get(row.user_id);
+      if (!user || getUserByEmail.get(row.email)) return null;
       db.prepare('UPDATE users SET email = ? WHERE id = ?').run(row.email, row.user_id);
       deleteLink.run(row.id);
-      return true;
+      deleteUserLinks.run('reset', row.user_id);
+      return user;
     })();
-    if (!ok) return res.status(409).json({ error: 'That email now belongs to another account, so it can’t be used.' });
+    if (!old) return res.status(409).json({ error: 'That email now belongs to another account, so it can’t be used.' });
+    sendQuietly(old.email, message({
+      subject: 'Your Pinnery email was changed',
+      lines: [`Hi ${old.display_name},`, `Your Pinnery sign-in email was changed from ${old.email} to ${row.email} just now. This address can no longer sign in or reset the password.`],
+      closing: 'If this was you, there’s nothing to do. If it wasn’t, tell your Pinnery admin straight away.',
+    }));
     res.json({ ok: true, email: row.email });
   }
 

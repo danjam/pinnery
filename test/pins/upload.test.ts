@@ -1,10 +1,11 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
 import zlib from 'node:zlib';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
-import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
+import { avifBuffer, jpegBuffer, pngBuffer } from '../helpers/images.ts';
 import { newBoard, originalFile, rawPost, upload, type BoardRef } from '../helpers/pins.ts';
 
 describe('pins', () => {
@@ -36,6 +37,23 @@ describe('pins', () => {
     const got = await alice.get(`/api/pins/${png.body.id}`);
     assert.equal(got.status, 200);
     assert.equal(got.body.sha256, png.body.sha256);
+  });
+
+  it('uploads AVIF and makes its thumbnails', async () => {
+    const r = await upload(alice, board.id, await avifBuffer({ width: 40, height: 30, color: '#808000' }));
+    assert.equal(r.status, 201);
+    assert.equal(r.body.mime, 'image/avif');
+    assert.equal(r.body.width, 40);
+    assert.equal(r.body.height, 30);
+    const orig = await alice.fetch(`/i/${r.body.sha256}`);
+    assert.equal(orig.headers.get('content-type'), 'image/avif');
+    // made at save time, and served as WebP
+    for (const size of [400, 800]) {
+      assert.ok(fs.existsSync(path.join(server.dataDir, 'thumbs', r.body.sha256.slice(0, 2), `${r.body.sha256}-${size}.webp`)), `thumb ${size}`);
+      const t = await alice.fetch(`/t/${size}/${r.body.sha256}`);
+      assert.equal(t.status, 200);
+      assert.equal(t.headers.get('content-type'), 'image/webp');
+    }
   });
 
   it('rejects non-images, empty bodies, missing board and oversize uploads', async () => {

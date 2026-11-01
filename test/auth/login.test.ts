@@ -87,6 +87,13 @@ describe('login and logout', () => {
     assert.equal((await b.get('/api/me')).status, 200);
   });
 
+  it('a malformed unrelated cookie is ignored', async () => {
+    const res = await alice.json('/api/me', { headers: { cookie: `other=%; ${alice.cookie()}; trailing=100%` } });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.email, 'alice@example.com');
+    assert.equal((await server.anon().fetch('/login', { headers: { cookie: 'other=%' } })).status, 200);
+  });
+
   it('malformed JSON gets a 400', async () => {
     const res = await server.anon().fetch('/api/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{nope' });
     assert.equal(res.status, 400);
