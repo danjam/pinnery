@@ -4,7 +4,8 @@ import path from 'node:path';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
-import { openDb } from './db.ts';
+import { openDb, SchemaError } from './db.ts';
+import type { Db } from './db.ts';
 import { createAuth, safeNext, parseConnectParams } from './auth.ts';
 import { createMailer } from './mail.ts';
 import { createStore, ImageError } from './images.ts';
@@ -52,7 +53,14 @@ const stampManifest = (rel: string, buf: Buffer): Buffer => {
   m.version_name = `${m.version}+${EXTENSION_FINGERPRINT}`;
   return Buffer.from(`${JSON.stringify(m, null, 2)}\n`);
 };
-const db = openDb(DATA_DIR);
+let db: Db;
+try {
+  db = openDb(DATA_DIR);
+} catch (e) {
+  if (!(e instanceof SchemaError)) throw e;
+  console.error(`${e.message} — refusing to start`);
+  process.exit(1);
+}
 const store = createStore(DATA_DIR);
 const mailer = createMailer();
 if (mailer.enabled && !PUBLIC_URL) console.warn('mail: PINNERY_PUBLIC_URL is not set, so "forgot password" won\'t email reset links (admins can still hand them out)');

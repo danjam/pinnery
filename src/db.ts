@@ -114,6 +114,31 @@ CREATE TABLE IF NOT EXISTS email_tokens (
 CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens(user_id, kind);
 `;
 
+// The database's schema version lives in its header (PRAGMA user_version). SCHEMA above is the
+// latest shape: a new database gets it and starts at the latest version. An existing one runs only
+// the steps above its version, in order. To change the schema, update SCHEMA and append a step that
+// brings an existing database to the same shape. Never edit or reorder a step that has shipped.
+// Each step runs in a transaction that also records its version, so a failed step leaves the
+// database at the version before it.
+const MIGRATIONS: ((db: Db) => void)[] = [
+  // 1: databases from before versioning (user_version 0). Their shape varies, so this step looks
+  // at the tables. Later steps can rely on version 1 and needn't.
+  (db) => {
+    // From before duplicate detection was removed: a NOT NULL dhash column and a dupe_threshold
+    // setting, neither written any more.
+    if (hasColumn(db, 'pins', 'dhash')) db.exec('ALTER TABLE pins DROP COLUMN dhash');
+    db.prepare("DELETE FROM settings WHERE key = 'dupe_threshold'").run();
+    // From before accounts: the owner columns are added nullable (SQLite can't add a NOT NULL
+    // foreign key to an existing table); auth.ts fills them in when it seeds the admin.
+    if (!hasColumn(db, 'boards', 'owner_id')) db.exec('ALTER TABLE boards ADD COLUMN owner_id INTEGER REFERENCES users(id)');
+    if (!hasColumn(db, 'sessions', 'user_id')) db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+  },
+];
+export const SCHEMA_VERSION = MIGRATIONS.length;
+
+// The database was written by a newer Pinnery. Running older code on it could lose data.
+export class SchemaError extends Error {}
+
 export function openDb(dataDir: string): Db {
   fs.mkdirSync(dataDir, { recursive: true });
   const db = new Database(path.join(dataDir, 'pinnery.db'));
@@ -121,9 +146,31 @@ export function openDb(dataDir: string): Db {
   db.pragma('synchronous = NORMAL');
   db.pragma('foreign_keys = ON');
   db.pragma('busy_timeout = 5000');
-  if (preAccounts(db)) backup(db, dataDir);
-  db.exec(SCHEMA);
-  migrate(db);
+
+  const version = db.pragma('user_version', { simple: true }) as number;
+  if (version > SCHEMA_VERSION) {
+    db.close();
+    throw new SchemaError(`the database is at schema version ${version}, but this Pinnery only knows up to ${SCHEMA_VERSION}: it was used by a newer Pinnery`);
+  }
+  if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table'").get()) {
+    db.transaction(() => {
+      db.exec(SCHEMA);
+      db.pragma(`user_version = ${SCHEMA_VERSION}`);
+    })();
+    return db;
+  }
+  if (version === 0) {
+    if (preAccounts(db)) backup(db, dataDir);
+    // Tables a pre-versioning database doesn't have yet are created at the latest shape.
+    db.exec(SCHEMA);
+  }
+  for (let v = version + 1; v <= SCHEMA_VERSION; v++) {
+    db.transaction(() => {
+      MIGRATIONS[v - 1](db);
+      db.pragma(`user_version = ${v}`);
+    })();
+    console.log(`db: migrated to schema version ${v}`);
+  }
   return db;
 }
 
@@ -132,7 +179,7 @@ const columnsOf = (db: Db, table: string) => db.pragma(`table_info(${table})`) a
 const hasColumn = (db: Db, table: string, column: string) => columnsOf(db, table).some((c) => c.name === column);
 
 // A database from before accounts: it has sessions, but they belong to nobody. Snapshot it before
-// the schema changes below, to <dataDir>/backups/pre-accounts-<timestamp>.db.
+// migrating, to <dataDir>/backups/pre-accounts-<timestamp>.db.
 const preAccounts = (db: Db) => columnsOf(db, 'sessions').length > 0 && !hasColumn(db, 'sessions', 'user_id');
 
 function backup(db: Db, dataDir: string) {
@@ -141,17 +188,6 @@ function backup(db: Db, dataDir: string) {
   const file = path.join(dir, `pre-accounts-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
   db.prepare('VACUUM INTO ?').run(file);
   console.log(`accounts: backed up the database to ${file}`);
-}
-
-function migrate(db: Db) {
-  // Databases from before duplicate detection was removed carry a NOT NULL dhash column and a
-  // dupe_threshold setting; neither is written any more.
-  if (hasColumn(db, 'pins', 'dhash')) db.exec('ALTER TABLE pins DROP COLUMN dhash');
-  db.prepare("DELETE FROM settings WHERE key = 'dupe_threshold'").run();
-  // Databases from before accounts get the owner columns nullable (SQLite can't add a NOT NULL
-  // foreign key to an existing table); auth.ts fills them in when it seeds the admin.
-  if (!hasColumn(db, 'boards', 'owner_id')) db.exec('ALTER TABLE boards ADD COLUMN owner_id INTEGER REFERENCES users(id)');
-  if (!hasColumn(db, 'sessions', 'user_id')) db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
 }
 
 export function getSetting(db: Db, key: string): string | null {
