@@ -34,12 +34,13 @@ The extension isn't versioned separately: the server fingerprints the built exte
 - `src/server.ts` wires modules and lists every route.
 - Fields the middleware sets on `req` (`session`, `user`, `pick`) are declared once, in `src/express.d.ts`.
 - `src/access.ts` is the only place access is decided (owner / viewer / editor). All board, pin and image queries go through it, and foreign ids return 404.
+- `src/auth.ts` builds auth from the modules in `src/auth/`, which share one `createCore()` (lookups, sessions, failure counters).
 - `src/db.ts`: the schema version is SQLite's `user_version`. To change the schema, update `SCHEMA` (new databases) and append a step to `MIGRATIONS` (existing ones). Never edit a step that has shipped.
 - Originals are content-addressed by SHA-256 and shared across pins and users; deletes are refcounted.
 - Server-side URL fetches go through the SSRF guard in `src/fetch.ts`.
 - Extension and share-target saves upload first to `/api/pick/*`, where the image is parked in memory (`src/pending.ts`). The server-hosted `/pick/<token>` page then chooses the board; its token is the page's only credential.
 - Mail is optional. Every emailed link needs a copy-the-link fallback. Links emailed to someone who isn't signed in (forgot password) must use `PINNERY_PUBLIC_URL`, never the request's Host header.
-- Redirects to a `?next=` path go through `safeNext` (`src/auth.ts`) or `js/next.ts` in pages; never redirect to it raw.
+- Redirects to a `?next=` path go through `safeNext` (`src/auth/util.ts`) or `js/next.ts` in pages; never redirect to it raw.
 - The image runs on distroless Node as uid 1000, with a read-only filesystem except `/data`: no shell or npm at runtime, so never shell out (`child_process`) and only write under `DATA_DIR`.
 - Frontend is vanilla TypeScript with no framework, bundled per page by esbuild. Reuse `js/ui.ts` (`el()`, dialogs, toasts), `js/icons.ts` (MDI paths copied from `@mdi/js`) and the `css/app.css` tokens.
 - The CSP (`src/server.ts`) only allows scripts from our own files: no inline `<script>` blocks or `on…=` attributes in pages. Put a page's script in `public/js/<page>.ts` (pages still load `/js/<page>.js`, the bundle), and load `/js/boot.js` (from `js/boot.ts`) first in `<head>` for the theme. `test/headers.test.ts` fails on inline scripts.

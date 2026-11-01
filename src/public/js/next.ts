@@ -1,5 +1,5 @@
 // Where to go after signing in: the ?next= path if it's on our own origin, else home. Mirrors
-// safeNext in src/auth.ts: resolved as a URL so tricks like "/\t/evil.com" (read as //evil.com)
+// safeNext in src/auth/util.ts: resolved as a URL so tricks like "/\t/evil.com" (read as //evil.com)
 // fail the origin check, and a normalised path starting with // is refused as well.
 export function nextPath(): string {
   const next = new URLSearchParams(location.search).get('next');
