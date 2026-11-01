@@ -1,5 +1,6 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { startServer } from './helpers/server.js';
@@ -7,12 +8,15 @@ import { linkFrom, tokenFromLink } from './helpers/mail.js';
 
 const BAD_TOKEN = 'f'.repeat(64);
 
-// Make every emailed link of a kind already expired (the server only reads the row).
-function expireLinks(server, kind) {
+// Make one emailed link already expired (the server only reads the row). Only just: rows more than
+// a week past expiry are purged whenever a link is issued, and a purged link answers 404, not 410.
+function expireLink(server, link) {
+  const hash = crypto.createHash('sha256').update(tokenFromLink(link)).digest('hex');
   const db = new Database(path.join(server.dataDir, 'pinnery.db'));
   try {
     db.pragma('busy_timeout = 5000');
-    db.prepare('UPDATE email_tokens SET expires_at = ? WHERE kind = ?').run('2000-01-01T00:00:00.000Z', kind);
+    const { changes } = db.prepare('UPDATE email_tokens SET expires_at = ? WHERE token_hash = ?').run(new Date(Date.now() - 60_000).toISOString(), hash);
+    assert.equal(changes, 1);
   } finally {
     db.close();
   }
@@ -109,7 +113,7 @@ describe('accounts (mail on)', () => {
       assert.equal((await anon.get('/api/signup/not-a-token')).status, 404);
 
       const { body } = await admin.post('/api/invites', { email: 'late@example.com' });
-      expireLinks(server, 'invite');
+      expireLink(server, body.link);
       const token = tokenFromLink(body.link);
       assert.equal((await anon.get(`/api/signup/${token}`)).status, 410);
       assert.equal((await anon.post(`/api/signup/${token}`, { display_name: 'L', password: 'late-pass-123' })).status, 410);
@@ -209,7 +213,7 @@ describe('accounts (mail on)', () => {
       const u = await admin.get('/api/users');
       const target = u.body.find((x) => x.email === 'alice@example.com');
       const { body } = await admin.post(`/api/users/${target.id}/reset`);
-      expireLinks(server, 'reset');
+      expireLink(server, body.link);
       assert.equal((await anon.get(`/api/reset/${tokenFromLink(body.link)}`)).status, 410);
       assert.equal((await anon.post(`/api/reset/${tokenFromLink(body.link)}`, { password: 'whatever-pass-1' })).status, 410);
     });

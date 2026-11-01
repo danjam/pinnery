@@ -234,7 +234,7 @@ export async function startServer({ env = {}, mail = false } = {}) {
     if (status !== 200) throw new Error(`admin password change failed: ${status} ${JSON.stringify(body)}`);
     client.password = ADMIN_PASSWORD;
     return client;
-  })();
+  })().catch((err) => { admin = undefined; throw err; }); // don't cache a failure
 
   async function createUser(email, password, { displayName } = {}) {
     const adminC = await adminClient();

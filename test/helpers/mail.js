@@ -103,6 +103,7 @@ export async function startMailSink() {
     sockets.add(socket);
     socket.on('close', () => sockets.delete(socket));
     socket.on('error', () => {});
+    socket.setEncoding('utf8'); // decodes across chunks, so a multibyte character split between two stays whole
     let buf = '';
     let env = { from: '', to: [] };
     let data = null; // lines of the message while in DATA
@@ -137,7 +138,7 @@ export async function startMailSink() {
     };
 
     socket.on('data', (chunk) => {
-      buf += chunk.toString('utf8');
+      buf += chunk;
       let i;
       while ((i = buf.indexOf('\r\n')) >= 0) {
         const line = buf.slice(0, i);
