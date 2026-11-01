@@ -10,6 +10,7 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 - Run: `PINNERY_ADMIN_EMAIL=admin@example.com PINNERY_PASSWORD=test-pass-1 DATA_DIR=<tmp> PORT=<port> node src/server.ts`
 - Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public`, its service worker (`tsconfig.sw.json`) and `extension`). CI runs it before the tests.
 - Test: `npm test` (node --test). Tests live in `test/<area>/` (accounts, auth, boards, pins), plus a few at the top level. Each file boots its own server with `startServer()` from `test/helpers/server.ts`; its header explains the clients and the sign-in throttle budget the tests share. Exercise UI changes against a throwaway instance.
+- Coverage: `npm run coverage` runs the tests under c8 and prints coverage of `src/` (server only; config in `.c8rc.json`). CI shows it in the job summary and uploads it to Coveralls (history, PR changes, the README badge).
 - `node scripts/icons.ts` regenerates extension/app icons from `src/public/icon.svg`.
 
 ## TypeScript

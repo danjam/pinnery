@@ -3,6 +3,7 @@
 # Pinnery
 
 [![Tests](https://github.com/danjam/pinnery/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/danjam/pinnery/actions/workflows/test.yml)
+[![Coverage](https://coveralls.io/repos/github/danjam/pinnery/badge.svg?branch=master)](https://coveralls.io/github/danjam/pinnery?branch=master)
 [![Latest release](https://img.shields.io/github/v/release/danjam/pinnery)](https://github.com/danjam/pinnery/releases/latest)
 [![Licence: MIT](https://img.shields.io/github/license/danjam/pinnery)](LICENSE)
 [![Node 24+](https://img.shields.io/badge/node-24%2B-339933)](package.json)

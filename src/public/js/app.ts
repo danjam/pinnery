@@ -716,9 +716,8 @@ function renderBoardHeader() {
       { label: 'Settings', icon: 'cog-outline', onclick: () => navigate('/settings') },
       { label: 'Sign out', icon: 'logout', onclick: signOut },
     ]),
-  // For viewers the two canAdd() items are false, which replaceChildren renders as text (#50).
-  // The cast hides that from tsc until it's fixed.
-  ] as (Node | string)[]);
+  // Viewers can't add, so Select and + Pin are false: drop them (replaceChildren would show "false").
+  ].filter((c) => c !== false));
   selMove.hidden = !isOwner(b);
 }
 

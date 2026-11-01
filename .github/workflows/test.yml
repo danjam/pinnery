@@ -1,7 +1,7 @@
 name: Test
 # Type-checks everything (npm run typecheck), then runs the API test suite (test/**/*.test.ts) against
-# a real server and a temporary database, on every push to master and every PR, so a red run shows
-# before a release.
+# a real server and a temporary database, with coverage, on every push to master and every PR, so a
+# red run shows before a release.
 on:
   push:
     branches: [master]
@@ -30,4 +30,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm test
+      # The tests under c8, which collects coverage from the servers they spawn too
+      # (NODE_V8_COVERAGE is inherited). The table goes to the log and the job summary.
+      - run: npm run coverage
+      - name: Coverage summary
+        if: always()
+        run: |
+          { echo '### Coverage (src/)'; echo '```'; npx c8 report; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # Coveralls keeps the history, comments the change on PRs and serves the README badge. Its
+      # failures don't fail the job: this job is a required check, and an outage there shouldn't block
+      # merges.
+      - uses: coverallsapp/github-action@v2
+        with:
+          file: coverage/lcov.info
+          format: lcov
+          fail-on-error: false
