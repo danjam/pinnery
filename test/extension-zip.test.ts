@@ -30,15 +30,15 @@ describe('GET /extension.zip', () => {
   it('stamps the fingerprint into manifest.json', async () => {
     const file = path.join(dir, 'ext.zip');
     fs.writeFileSync(file, await download());
-    const z = openZipFile(file);
+    const z = await openZipFile(file);
     try {
       const entry = z.entries.find((e) => e.name === 'pinnery-extension/manifest.json');
       assert.ok(entry);
-      const manifest = JSON.parse(z.read(entry).toString('utf8'));
+      const manifest = JSON.parse((await z.read(entry)).toString('utf8'));
       const { body } = await server.anon().get('/healthz');
       assert.equal(manifest.version_name, `${manifest.version}+${body.extension_fingerprint}`);
     } finally {
-      z.close();
+      await z.close();
     }
   });
 

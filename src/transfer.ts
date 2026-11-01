@@ -147,7 +147,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       await zip.add('pins.json', Buffer.from(JSON.stringify(manifest, null, 2)));
       for (const [name, file] of files) {
         if (res.destroyed) return;
-        await zip.add(name, fs.readFileSync(file), { compress: false });
+        await zip.add(name, await fs.promises.readFile(file), { compress: false });
       }
       await zip.end();
       res.end();
@@ -169,7 +169,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
   // Spool the request body to a temp file, refusing anything over the cap.
   async function spool(req: Request) {
     if (Number(req.headers['content-length']) > IMPORT_MAX_BYTES) throw new ImageError(413, 'upload too large');
-    fs.mkdirSync(tmpDir, { recursive: true });
+    await fs.promises.mkdir(tmpDir, { recursive: true });
     const file = path.join(tmpDir, `import-${crypto.randomBytes(8).toString('hex')}.zip`);
     let total = 0;
     const counter = new Transform({
@@ -181,23 +181,23 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
     try {
       await pipeline(req, counter, fs.createWriteStream(file));
     } catch (e) {
-      fs.rmSync(file, { force: true });
+      await fs.promises.rm(file, { force: true });
       throw e;
     }
-    if (!total) { fs.rmSync(file, { force: true }); throw bad('empty upload'); }
+    if (!total) { await fs.promises.rm(file, { force: true }); throw bad('empty upload'); }
     return file;
   }
 
   // pins.json, checked field by field against what's actually in the zip. Returns the boards
   // with each pin resolved to its zip entry.
-  function readManifest(zip: ZipFile): ImportBoard[] {
+  async function readManifest(zip: ZipFile): Promise<ImportBoard[]> {
     const byName = new Map(zip.entries.map((e) => [e.name, e]));
     const manifestEntry = byName.get('pins.json');
     if (!manifestEntry) throw bad('not a Pinnery export: pins.json is missing');
     if (manifestEntry.size > MANIFEST_MAX_BYTES) throw bad('pins.json is too large');
     let manifest: RawManifest | null;
     try {
-      manifest = JSON.parse(zip.read(manifestEntry).toString('utf8'));
+      manifest = JSON.parse((await zip.read(manifestEntry)).toString('utf8'));
     } catch {
       throw bad('pins.json is not valid JSON');
     }
@@ -248,14 +248,14 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
     let zip: ZipFile | null = null;
     try {
       try {
-        zip = openZipFile(file, { maxEntrySize: Math.max(MAX_BYTES, MANIFEST_MAX_BYTES) });
+        zip = await openZipFile(file, { maxEntrySize: Math.max(MAX_BYTES, MANIFEST_MAX_BYTES) });
       } catch (e) {
         if (e instanceof ZipError) throw bad(e.message);
         throw e;
       }
       const unsafe = zip.entries.find((e) => !isSafeZipPath(e.name));
       if (unsafe) throw bad(`unsafe path in zip: ${unsafe.name}`);
-      const boards = readManifest(zip);
+      const boards = await readManifest(zip);
 
       // Pins are saved one at a time (fingerprinting is async, so no single transaction). A bad
       // file part-way through leaves the earlier pins in place — a re-import skips them — but a
@@ -276,7 +276,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
             let buf: Buffer;
             let info: Fingerprint;
             try {
-              buf = zip.read(pin.entry);
+              buf = await zip.read(pin.entry);
               info = await store.fingerprint(buf);
             } catch (e) {
               if (e instanceof ZipError || e instanceof ImageError) throw bad(`${pin.entry.name}: ${e.message}`);
@@ -297,8 +297,8 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       }
       res.json(summary);
     } finally {
-      zip?.close();
-      fs.rmSync(file, { force: true });
+      await zip?.close();
+      await fs.promises.rm(file, { force: true });
     }
   }
 
