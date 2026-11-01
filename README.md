@@ -17,6 +17,15 @@ Your own private Pinterest. Save images from anywhere into boards, browse them i
 - **Export and import** your boards as a zip at any time
 - Light and dark mode, a choice of accent colours, works on desktop and phone
 
+![Your boards](docs/screenshots/boards.webp)
+
+![A board](docs/screenshots/board.webp)
+
+<p>
+  <img src="docs/screenshots/sharing.webp" alt="Sharing a board" width="70%">
+  <img src="docs/screenshots/phone.webp" alt="A board on a phone" width="24%">
+</p>
+
 ## Getting started
 
 You'll need Docker. Create a `compose.yaml`:
