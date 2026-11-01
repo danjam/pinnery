@@ -54,6 +54,16 @@ export function linkBase(req: Request, publicUrl = ''): string {
   return base;
 }
 
+// Whether a request came from one of our own pages, by the browser's word: Sec-Fetch-Site when
+// sent, else an Origin matching our own (linkBase, so X-Forwarded-Proto counts behind a proxy).
+// A request with neither isn't trusted: every current browser sends at least one on a POST.
+export function sameOrigin(req: Request): boolean {
+  const site = req.get('sec-fetch-site');
+  if (site) return site === 'same-origin';
+  const origin = req.get('origin');
+  return !!origin && origin === linkBase(req);
+}
+
 // Salted scrypt, stored as salt:hash. Users carry their own; the `password_hash` setting
 // remembers PINNERY_PASSWORD so a changed value can be noticed on restart (see seed.ts).
 export const hashPassword = (pw: string) => {

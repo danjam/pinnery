@@ -6,7 +6,7 @@ import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
 import { openDb, SchemaError } from './db.ts';
 import type { Db } from './db.ts';
-import { createAuth, safeNext, parseConnectParams } from './auth.ts';
+import { createAuth, safeNext, parseConnectParams, sameOrigin, COOKIE } from './auth.ts';
 import { createMailer } from './mail.ts';
 import { createStore, ImageError } from './images.ts';
 import { createRoutes, createImageRoutes } from './routes.ts';
@@ -110,6 +110,23 @@ app.use(rateLimit({
   legacyHeaders: false,
   message: { error: 'too many requests, try again shortly' },
 }));
+
+// CSRF: SameSite=Lax counts every subdomain of the same registrable domain as same-site, so a
+// sibling app (or an XSS in one) on *.example.com could still send the session cookie with a form
+// POST. Writes that carry the cookie must come from our own pages (sameOrigin, auth/util.ts); so
+// must sign-in and sign-out, which have no session yet (login CSRF). Bearer tokens aren't sent by
+// browsers on their own, so they're exempt. The cookie is matched in the raw header, not parsed:
+// an unparseable cookie must not decide whether the check runs.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+const sessionCookieRe = new RegExp(`(?:^|;)\\s*${COOKIE}=`);
+app.use((req, res, next) => {
+  if (SAFE_METHODS.has(req.method)) return next();
+  if (req.get('authorization')?.startsWith('Bearer ')) return next();
+  const cookie = sessionCookieRe.test(req.get('cookie') || '');
+  if (!cookie && req.path !== '/api/login' && req.path !== '/api/logout') return next();
+  if (sameOrigin(req)) return next();
+  res.status(403).json({ error: 'cross-site request refused' });
+});
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 

@@ -19,7 +19,7 @@ import { seedAdmin } from './auth/seed.ts';
 //   email-change.ts  changing the sign-in email
 //   connect.ts       the extension's connect flow
 //   util.ts          hashing, cookies, safeNext and other pure helpers
-export { safeNext, linkBase } from './auth/util.ts';
+export { safeNext, linkBase, sameOrigin, COOKIE } from './auth/util.ts';
 export type { LinkKind, PublicUser, Session } from './auth/util.ts';
 export { parseConnectParams } from './auth/connect.ts';
 export type { ConnectParams } from './auth/connect.ts';
