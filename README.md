@@ -11,11 +11,11 @@
 Your own private Pinterest. Save images from anywhere into boards, browse them in a tidy grid, and share boards with the people you choose. It runs on your own server, so your pins stay yours.
 
 - **Boards** with cover images, a masonry grid and a full-screen viewer
-- **Save from anywhere**: a Chrome extension (right-click any image), your phone's share menu, or drag, drop, paste and upload in the app
+- **Save from anywhere**: a Chrome extension (right-click any image), your mobile's share menu, or drag, drop, paste and upload in the app
 - **Share boards** with family or friends, as viewers or editors
 - **Accounts by invite only**: nobody can sign up uninvited
 - **Export and import** your boards as a zip at any time
-- Light and dark mode, a choice of accent colours, works on desktop and phone
+- Light and dark mode, a choice of accent colours, works on desktop and mobile
 
 ![Your boards](docs/screenshots/boards.webp)
 
@@ -23,7 +23,7 @@ Your own private Pinterest. Save images from anywhere into boards, browse them i
 
 <p>
   <img src="docs/screenshots/sharing.webp" alt="Sharing a board" width="70%">
-  <img src="docs/screenshots/phone.webp" alt="A board on a phone" width="24%">
+  <img src="docs/screenshots/mobile.webp" alt="A board on mobile" width="24%">
 </p>
 
 ## Getting started
@@ -65,7 +65,7 @@ services:
 
 The container runs as user id 1000, so create the data folder with that owner first: `mkdir data && sudo chown 1000:1000 data`.
 
-Pinnery is meant to sit behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). Sign-in, the phone app and the extension all expect it. Once that's set up, start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
+Pinnery is meant to sit behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). Sign-in, the mobile app and the extension all expect it. Once that's set up, start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
 
 Just trying it out? `http://your-server:3420` works too. If people use Pinnery that way for real, with no proxy in front, set `PINNERY_PROXIES: 0` (see [Proxies and sign-in limits](docs/proxies.md)).
 
@@ -76,7 +76,7 @@ Just trying it out? `http://your-server:3420` works too. If people use Pinnery t
 - [Email](docs/email.md): what Pinnery sends, and setting it up
 - [Accounts and sharing](docs/accounts-and-sharing.md): invites, viewers and editors, passwords, admins
 - [Chrome extension](docs/extension.md): pin any image on the web
-- [On your phone](docs/phone.md): install the app and share images to it
+- [On mobile](docs/mobile.md): install the app and share images to it
 - [Backups and updates](docs/backups-and-updates.md): your data, and upgrading Pinnery
 
 ## Licence
