@@ -180,6 +180,8 @@ async function startOnce({ env = {}, mail = false }) {
       PINNERY_SMTP_PORT: String(sink.port),
       PINNERY_SMTP_SECURE: 'false', // plain SMTP; the sink offers no STARTTLS either
       PINNERY_SMTP_FROM: 'Pinnery <pinnery@example.com>',
+      // "Forgot password" only emails links when this is set (see selfReset in auth.js).
+      PINNERY_PUBLIC_URL: `http://127.0.0.1:${port}`,
     });
   }
   Object.assign(childEnv, env);

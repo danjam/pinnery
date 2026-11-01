@@ -13,7 +13,7 @@ describe('accounts (mail on)', () => {
   after(() => server.stop());
 
   it('reports mail enabled', async () => {
-    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: true });
+    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: true, reset: true });
   });
 
   describe('invites and signup', () => {

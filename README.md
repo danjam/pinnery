@@ -79,7 +79,7 @@ Pinnery also uses the proxy's `X-Forwarded-Proto` header to tell when visitors a
 | --- | --- | --- |
 | `PINNERY_ADMIN_EMAIL` | yes | Email of the first (admin) account. |
 | `PINNERY_PASSWORD` | yes | First sign-in password for that account. Forgotten the admin password? Change this value and restart to reset it. |
-| `PINNERY_PUBLIC_URL` | recommended | The address people use to reach Pinnery, e.g. `https://pinnery.example.com`. Used in emailed links. |
+| `PINNERY_PUBLIC_URL` | recommended | The address people use to reach Pinnery, e.g. `https://pinnery.example.com`. Used in emailed links. "Forgot password" only emails reset links when this is set; without it, an admin can hand out reset links instead. |
 | `PINNERY_SMTP_HOST` | for email | Your mail server, e.g. `smtp.example.com`. |
 | `PINNERY_SMTP_PORT` | | Default `587`. |
 | `PINNERY_SMTP_SECURE` | | Set to `true` if your provider uses port 465. |

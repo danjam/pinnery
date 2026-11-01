@@ -15,9 +15,10 @@ const api = async (method, path, body) => {
   return data;
 };
 const form = document.getElementById('form');
-const { enabled } = await api('GET', '/api/mail').catch(() => ({ enabled: true }));
-if (!enabled) {
-  replace(p('Email isn’t set up on this Pinnery, so it can’t send reset links. Ask an admin to reset your password for you.'), link('/login', 'Back to sign in'));
+// `reset`: email is set up and PINNERY_PUBLIC_URL is set (see selfReset in auth.js).
+const { reset } = await api('GET', '/api/mail').catch(() => ({ reset: true }));
+if (!reset) {
+  replace(p('This Pinnery can’t email reset links. Ask an admin to reset your password for you.'), link('/login', 'Back to sign in'));
 } else {
   form.hidden = false;
   form.email.focus();

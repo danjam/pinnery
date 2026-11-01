@@ -13,7 +13,7 @@ describe('accounts (mail off)', () => {
   after(() => server.stop());
 
   it('reports mail disabled', async () => {
-    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: false });
+    assert.deepEqual((await server.anon().get('/api/mail')).body, { enabled: false, reset: false });
   });
 
   it('invites return the link for copying and it works', async () => {

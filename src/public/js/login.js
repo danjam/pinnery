@@ -13,7 +13,9 @@ form.addEventListener('submit', async (e) => {
   if (res.ok) {
     // ?next= continues to a same-origin page (the extension's /connect); anything else goes home.
     const next = new URLSearchParams(location.search).get('next');
-    location.replace(next && /^\/(?![/\\])/.test(next) ? next : '/');
+    // Resolve it as the browser will and stay on our origin ("/\t/evil.com" means //evil.com).
+    const target = next && next.startsWith('/') ? new URL(next, location.origin) : null;
+    location.replace(target && target.origin === location.origin ? target.pathname + target.search + target.hash : '/');
     return;
   }
   const body = await res.json().catch(() => ({}));

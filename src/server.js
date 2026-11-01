@@ -56,6 +56,7 @@ const stampManifest = (rel, buf) => {
 const db = openDb(DATA_DIR);
 const store = createStore(DATA_DIR);
 const mailer = createMailer();
+if (mailer.enabled && !PUBLIC_URL) console.warn('mail: PINNERY_PUBLIC_URL is not set, so "forgot password" won\'t email reset links (admins can still hand them out)');
 const auth = createAuth(db, { password: PASSWORD, adminEmail: ADMIN_EMAIL, mailer, publicUrl: PUBLIC_URL });
 
 // Delete files no pin references (crash leftovers) and warn about pins whose original is missing.

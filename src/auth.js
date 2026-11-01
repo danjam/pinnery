@@ -40,10 +40,14 @@ function parseCookies(header) {
   return out;
 }
 
-// A same-origin path for the login page's `next` parameter: must start with a single slash (no
-// scheme, no protocol-relative `//host`, no `/\host`). Anything else falls back to the home page.
+// A same-origin path for the login page's `next` parameter, or null (home page). Resolved the way a
+// browser would, then checked to stay on our origin: a pattern check alone misses tricks like
+// "/\t/evil.com", which browsers read as //evil.com. Returns the normalised path.
 export function safeNext(v) {
-  return typeof v === 'string' && /^\/(?![/\\])/.test(v) && v.length <= 2048 ? v : null;
+  if (typeof v !== 'string' || !v.startsWith('/') || v.length > 2048) return null;
+  const base = 'http://pinnery.invalid';
+  const u = new URL(v, base);
+  return u.origin === base ? u.pathname + u.search + u.hash : null;
 }
 
 // Validate the connect request parameters (query on GET /connect, JSON body on the decision POST).
@@ -71,7 +75,11 @@ export function parseConnectParams(src) {
 
 // The base of links we hand out: PINNERY_PUBLIC_URL when set, else our own origin as the browser
 // sees it (X-Forwarded-Proto counts from a proxy, see PINNERY_PROXIES). No trailing slash.
-export const linkBase = (req, publicUrl = '') => (publicUrl || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
+export function linkBase(req, publicUrl = '') {
+  let base = publicUrl || `${req.protocol}://${req.get('host')}`;
+  while (base.endsWith('/')) base = base.slice(0, -1); // not a regex: the Host header is untrusted
+  return base;
+}
 
 // mailer: see mail.js (may be disabled). publicUrl: PINNERY_PUBLIC_URL, the base of emailed links;
 // without it the request's own origin is used.
@@ -89,7 +97,7 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     return !!(salt && digest) && safeEqual(hex(crypto.scryptSync(pw, salt, 32)), digest);
   };
   const normaliseEmail = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
-  const validEmail = (e) => EMAIL_RE.test(e) && e.length <= 254;
+  const validEmail = (e) => e.length <= 254 && EMAIL_RE.test(e); // length first: bounds the regex's work
 
   const USER_COLS = 'id, email, display_name, password_hash, is_admin, must_change_password';
   const getUser = db.prepare(`SELECT ${USER_COLS} FROM users WHERE id = ?`);
@@ -429,8 +437,15 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     res.status(201).json({ email: user.email, link, expires_at, sent, error });
   }
 
-  // GET /api/mail — whether email is set up (the forgot page and Settings adapt). Public.
-  const mailStatus = (req, res) => res.json({ enabled: mailer.enabled });
+  // Self-service password reset by email needs PINNERY_PUBLIC_URL as well as mail: the request comes
+  // from someone not signed in, and without a fixed base the link would be built from their Host
+  // header, so an attacker could have a real reset email point at their own site. Admins can still
+  // hand out reset links (Settings → Users).
+  const selfReset = mailer.enabled && !!publicUrl;
+
+  // GET /api/mail — whether email is set up, and whether "forgot password" can email a link (the
+  // forgot page and Settings adapt). Public.
+  const mailStatus = (req, res) => res.json({ enabled: mailer.enabled, reset: selfReset });
 
   // POST /api/forgot — body { email }. The reply is the same whether or not the account exists, and
   // the email goes out in the background so the timing is too. Per-IP limit answers 429 before
@@ -441,12 +456,12 @@ export function createAuth(db, { password, adminEmail, mailer, publicUrl = '' })
     const email = normaliseEmail(req.body?.email);
     if (!validEmail(email)) return res.status(400).json({ error: 'enter an email address' });
     forgotByIp.record(ip);
-    const reply = () => res.json({ ok: true, mail: mailer.enabled });
-    if (!mailer.enabled || forgotByEmail.throttled(email)) return reply();
+    const reply = () => res.json({ ok: true, mail: selfReset });
+    if (!selfReset || forgotByEmail.throttled(email)) return reply();
     forgotByEmail.record(email);
     const user = getUserByEmail.get(email);
     if (user) {
-      const { link } = createResetLink(user.id, baseUrl(req));
+      const { link } = createResetLink(user.id, baseUrl(req)); // PINNERY_PUBLIC_URL, see selfReset
       sendQuietly(user.email, resetMessage(user, link));
     }
     reply();

@@ -38,7 +38,7 @@ describe('page routes and ?next', () => {
   });
 
   it('safeNext rejects off-site targets', async () => {
-    for (const bad of ['https://evil.example.com/', '//evil.example.com', '/\\evil.example.com', 'javascript:alert(1)', 'evil', '/' + 'a'.repeat(2100)]) {
+    for (const bad of ['https://evil.example.com/', '//evil.example.com', '/\\evil.example.com', 'javascript:alert(1)', 'evil', '/' + 'a'.repeat(2100), '/\t/evil.example.com', '/\n/evil.example.com', '/\t\\evil.example.com']) {
       const r = await frank.fetch(`/login?next=${encodeURIComponent(bad)}`);
       assert.equal(r.status, 302, bad);
       assert.equal(r.headers.get('location'), '/', bad);
