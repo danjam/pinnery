@@ -11,6 +11,7 @@ import { normaliseEmail, validEmail } from './util.ts';
 export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mailer) {
   const { getUser, getUserByEmail, throttled, checkPassword } = core;
   const { baseUrl, deleteLink, deleteUserLinks, issueLink, lookupLink, sendQuietly } = links;
+  const setEmail = db.prepare<[string, number]>('UPDATE users SET email = ? WHERE id = ?');
 
   // POST /api/email — body { email, password }, signed in. Sends a confirmation to the new address;
   // nothing changes until it's used. Needs mail: a link to copy would go to the wrong person.
@@ -57,7 +58,7 @@ export function createEmailChange(db: Db, core: Core, links: Links, mailer: Mail
     const old = db.transaction(() => {
       const user = getUser.get(row.user_id);
       if (!user || getUserByEmail.get(row.email)) return null;
-      db.prepare('UPDATE users SET email = ? WHERE id = ?').run(row.email, row.user_id);
+      setEmail.run(row.email, row.user_id);
       deleteLink.run(row.id);
       deleteUserLinks.run('reset', row.user_id);
       return user;

@@ -110,8 +110,12 @@ describe('pins', () => {
     for (const color of ['#111111', '#222222', '#333333']) pins.push((await upload(alice, src.id, await pngBuffer({ color }))).body);
     const bobPin = (await upload(bob, (await newBoard(bob, 'B2')).id, await pngBuffer({ color: '#999999' }))).body;
 
+    assert.equal((await alice.patch(`/api/boards/${src.id}`, { cover_pin_id: pins[1].id })).status, 200);
     const moved = await alice.post('/api/pins/move', { ids: [pins[0].id, pins[1].id], board_id: dst.id });
     assert.deepEqual(moved.body, { moved: 2 });
+    // a board whose cover moved away falls back to its newest pin
+    const srcAfter = (await alice.get('/api/boards')).body.find((b: { id: number }) => b.id === src.id);
+    assert.equal(srcAfter.cover_pin_id, null);
     assert.equal((await alice.get(`/api/boards/${dst.id}/pins`)).body.pins.length, 2);
     assert.equal((await alice.get(`/api/boards/${src.id}/pins`)).body.pins.length, 1);
     assert.equal((await alice.post('/api/pins/move', { ids: [pins[2].id], board_id: 999999 })).status, 400);

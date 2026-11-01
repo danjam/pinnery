@@ -11,6 +11,8 @@ import { MIN_PASSWORD, hashPassword, normaliseEmail, validEmail } from './util.t
 export function createInvites(db: Db, { getUserByEmail, startSession }: Core, { baseUrl, deleteLink, live, issueLink, lookupLink }: Links, mailer: Mailer) {
   const pendingInvites = db.prepare<[], { id: number; email: string; created_at: string; expires_at: string }>(`SELECT id, email, created_at, expires_at FROM email_tokens WHERE kind = 'invite' AND ${live} ORDER BY id`);
   const pendingInviteFor = db.prepare<[string], { id: number }>(`SELECT id FROM email_tokens WHERE kind = 'invite' AND email = ? AND ${live}`);
+  const deleteInvite = db.prepare<[number]>("DELETE FROM email_tokens WHERE id = ? AND kind = 'invite'");
+  const insertUser = db.prepare<[string, string, string]>('INSERT INTO users (email, display_name, password_hash) VALUES (?, ?, ?)');
 
   // POST /api/invites — body { email }. Emails the signup link when mail is on; the link is in the
   // reply either way (shown once — only its hash is kept), with `sent` and any send error.
@@ -45,7 +47,7 @@ export function createInvites(db: Db, { getUserByEmail, startSession }: Core, { 
 
   function cancelInvite(req: Request, res: Response) {
     const id = Number(req.params.id);
-    const { changes } = Number.isInteger(id) && id > 0 ? db.prepare("DELETE FROM email_tokens WHERE id = ? AND kind = 'invite'").run(id) : { changes: 0 };
+    const { changes } = Number.isInteger(id) && id > 0 ? deleteInvite.run(id) : { changes: 0 };
     if (!changes) return res.status(404).json({ error: 'invite not found' });
     res.json({ ok: true });
   }
@@ -69,7 +71,7 @@ export function createInvites(db: Db, { getUserByEmail, startSession }: Core, { 
     // Checked again after hashing: a concurrent signup on the same invite may have won meanwhile.
     const userId = db.transaction(() => {
       if (getUserByEmail.get(row.email)) return null;
-      const { lastInsertRowid } = db.prepare('INSERT INTO users (email, display_name, password_hash) VALUES (?, ?, ?)').run(row.email, name, hash);
+      const { lastInsertRowid } = insertUser.run(row.email, name, hash);
       deleteLink.run(row.id);
       return lastInsertRowid;
     })();

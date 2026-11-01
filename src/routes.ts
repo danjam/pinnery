@@ -21,7 +21,6 @@ const toId = (v: unknown) => {
 };
 const bad = (msg: string) => new ImageError(400, msg);
 const notFound = (what: string) => new ImageError(404, `${what} not found`);
-const placeholders = (n: number) => Array(n).fill('?').join(',');
 
 const PIN_COLS = 'id, board_id, sha256, width, height, mime, animated, source_url, page_title, created_at';
 
@@ -140,6 +139,9 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     res.status(201).json(boardJson(readBoard(req.user.id, lastInsertRowid)));
   });
 
+  const renameBoard = db.prepare<[string, number]>('UPDATE boards SET name = ? WHERE id = ?');
+  const setCover = db.prepare<[number | null, number]>('UPDATE boards SET cover_pin_id = ? WHERE id = ?');
+
   // Rename and cover are the owner's.
   api.patch('/boards/:id', (req, res) => {
     const id = toId(req.params.id);
@@ -157,21 +159,24 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
         if (!pin || pin.board_id !== board.id) throw bad('cover pin must belong to this board');
       }
     }
-    if (name !== undefined) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(name, board.id);
-    if (coverId !== undefined) db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, board.id);
+    if (name !== undefined) renameBoard.run(name, board.id);
+    if (coverId !== undefined) setCover.run(coverId, board.id);
     res.json(boardJson(readBoard(req.user.id, board.id)));
   });
 
   // Delete a board. Body: { move_to: <board id> } re-homes its pins; otherwise they're deleted.
   // Returns the deleted pins' hashes, for removeUnused.
+  const rehomePins = db.prepare<[number, number]>('UPDATE pins SET board_id = ? WHERE board_id = ?');
+  const boardPinIds = db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?');
+  const deleteBoardRow = db.prepare<[number]>('DELETE FROM boards WHERE id = ?');
   const deleteBoard = db.transaction((id: number, moveTo: number | null) => {
     let shas: string[] = [];
     if (moveTo) {
-      db.prepare('UPDATE pins SET board_id = ? WHERE board_id = ?').run(moveTo, id);
+      rehomePins.run(moveTo, id);
     } else {
-      ({ shas } = deletePinRows(db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?').all(id).map((r) => r.id)));
+      ({ shas } = deletePinRows(boardPinIds.all(id).map((r) => r.id)));
     }
-    db.prepare('DELETE FROM boards WHERE id = ?').run(id);
+    deleteBoardRow.run(id);
     return shas;
   });
 
@@ -187,12 +192,14 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     res.json({ ok: true });
   });
 
+  const boardPins = (order: 'ASC' | 'DESC') => db.prepare<[number], PinRow>(`SELECT ${PIN_COLS} FROM pins WHERE board_id = ? ORDER BY id ${order}`);
+  const boardPinsAsc = boardPins('ASC');
+  const boardPinsDesc = boardPins('DESC');
   api.get('/boards/:id/pins', (req, res) => {
     const id = toId(req.params.id);
     const board = id && access.canSeeBoard(req.user.id, id);
     if (!board) throw notFound('board');
-    const order = req.query.order === 'asc' ? 'ASC' : 'DESC';
-    const pins = db.prepare<[number], PinRow>(`SELECT ${PIN_COLS} FROM pins WHERE board_id = ? ORDER BY id ${order}`).all(board.id);
+    const pins = (req.query.order === 'asc' ? boardPinsAsc : boardPinsDesc).all(board.id);
     res.json({ board: boardPublic(board), pins });
   });
 
@@ -393,11 +400,14 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   // Delete pin rows. Call inside a transaction, then pass the returned hashes to removeUnused once
   // it has committed: files go only after the rows are gone for good, never ahead of a rollback.
+  // Id lists are bound as one JSON array (json_each), so each statement is prepared once whatever the length.
+  const shasOfPins = db.prepare<[string], { sha256: string }>('SELECT DISTINCT sha256 FROM pins WHERE id IN (SELECT value FROM json_each(?))');
+  const deletePinIds = db.prepare<[string]>('DELETE FROM pins WHERE id IN (SELECT value FROM json_each(?))');
   function deletePinRows(ids: number[]) {
     if (!ids.length) return { changes: 0, shas: [] };
-    const ph = placeholders(ids.length);
-    const shas = db.prepare<number[], { sha256: string }>(`SELECT DISTINCT sha256 FROM pins WHERE id IN (${ph})`).all(...ids).map((r) => r.sha256);
-    const { changes } = db.prepare(`DELETE FROM pins WHERE id IN (${ph})`).run(...ids);
+    const json = JSON.stringify(ids);
+    const shas = shasOfPins.all(json).map((r) => r.sha256);
+    const { changes } = deletePinIds.run(json);
     return { changes, shas };
   }
 
@@ -416,10 +426,12 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   }
 
   // Move pins; a board whose cover moves away falls back to its newest pin.
+  const clearCovers = db.prepare<[string]>('UPDATE boards SET cover_pin_id = NULL WHERE cover_pin_id IN (SELECT value FROM json_each(?))');
+  const movePinIds = db.prepare<[number, string]>('UPDATE pins SET board_id = ? WHERE id IN (SELECT value FROM json_each(?))');
   const movePins = db.transaction((ids: number[], boardId: number) => {
-    const ph = placeholders(ids.length);
-    db.prepare(`UPDATE boards SET cover_pin_id = NULL WHERE cover_pin_id IN (${ph})`).run(...ids);
-    return db.prepare(`UPDATE pins SET board_id = ? WHERE id IN (${ph})`).run(boardId, ...ids).changes;
+    const json = JSON.stringify(ids);
+    clearCovers.run(json);
+    return movePinIds.run(boardId, json).changes;
   });
 
   api.delete('/pins/:id', (req, res) => {

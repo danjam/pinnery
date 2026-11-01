@@ -37,9 +37,15 @@ export function createAccess(db: Db) {
   const seePin = db.prepare<ByUser, PinRow>(`SELECT ${PIN} FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id = @id AND ${SEES}`);
   // How many of a list of pins sit on boards matching the rule — a bulk caller wants all of them.
   // (COUNT without GROUP BY always yields a row.)
-  const pinsMatching = (rule: string, userId: number, ids: number[]) => db.prepare<unknown[], { n: number }>(
-    `SELECT COUNT(*) AS n FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id IN (${Array(ids.length).fill('?').join(',')}) AND ${rule}`,
-  ).get(...ids, { user: userId })!.n;
+  // The ids are bound as one JSON array, so each rule's statement is prepared once.
+  const pinsMatching = (rule: string) => {
+    const stmt = db.prepare<{ ids: string; user: number }, { n: number }>(
+      `SELECT COUNT(*) AS n FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.id IN (SELECT value FROM json_each(@ids)) AND ${rule}`,
+    );
+    return (userId: number, ids: number[]) => stmt.get({ ids: JSON.stringify(ids), user: userId })!.n;
+  };
+  const editablePins = pinsMatching(EDITS);
+  const ownedPins = pinsMatching(OWNS);
 
   // An image is visible when some pin on a visible board carries its hash.
   const seeSha = db.prepare<{ sha: string; user: number }, { mime: string }>(`SELECT p.mime FROM pins p JOIN boards b ON b.id = p.board_id WHERE p.sha256 = @sha AND ${SEES} LIMIT 1`);
@@ -59,8 +65,8 @@ export function createAccess(db: Db) {
     ownsBoard: (userId: number, boardId: number) => ownBoard.get({ user: userId, id: boardId }) ?? null,
     canSeePin: (userId: number, pinId: number) => seePin.get({ user: userId, id: pinId }) ?? null,
     // True when every id is a pin on a board the user may edit (delete from) or owns (move out of).
-    canEditPins: (userId: number, ids: number[]) => pinsMatching(EDITS, userId, ids) === ids.length,
-    ownsPins: (userId: number, ids: number[]) => pinsMatching(OWNS, userId, ids) === ids.length,
+    canEditPins: (userId: number, ids: number[]) => editablePins(userId, ids) === ids.length,
+    ownsPins: (userId: number, ids: number[]) => ownedPins(userId, ids) === ids.length,
     canSeeSha: (userId: number, sha: string) => seeSha.get({ user: userId, sha }) ?? null,
     canSeeCoverSha: (userId: number, sha: string) => !!seeCoverSha.get({ user: userId, sha }),
   };
