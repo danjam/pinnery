@@ -18,7 +18,7 @@ const api = async <T>(method: string, path: string, body?: unknown): Promise<T> 
   return data;
 };
 const form = document.getElementById('form') as HTMLFormElement & { email: HTMLInputElement };
-// `reset`: email is set up and PINNERY_PUBLIC_URL is set (see selfReset in auth.ts).
+// `reset`: email is set up and PINNERY_PUBLIC_URL is set (see selfReset in auth/reset.ts).
 const { reset } = await api<{ reset: boolean }>('GET', '/api/mail').catch(() => ({ reset: true }));
 if (!reset) {
   replace(p('This Pinnery can’t email reset links. Ask an admin to reset your password for you.'), link('/login', 'Back to sign in'));
