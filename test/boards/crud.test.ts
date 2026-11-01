@@ -52,6 +52,23 @@ describe('boards and access scoping', () => {
       assert.equal(cleared.body.cover_pin_id, null);
     });
 
+    it('shows the chosen cover, else the newest pin, else none', async () => {
+      const covers = await newBoard(owner, 'Covers');
+      const path = `/api/boards/${covers.id}`;
+      const listed = async () => (await owner.get('/api/boards')).body.find((b: { id: number }) => b.id === covers.id).cover;
+      assert.equal(await listed(), null);
+
+      const older = (await upload(owner, covers.id, await pngBuffer({ width: 40, height: 30, color: '#112233' }))).body;
+      const newer = (await upload(owner, covers.id, await pngBuffer({ width: 20, height: 50, color: '#332211' }))).body;
+      assert.deepEqual(await listed(), { sha256: newer.sha256, width: 20, height: 50 });
+
+      const chosen = await owner.patch(path, { cover_pin_id: older.id });
+      assert.deepEqual(chosen.body.cover, { sha256: older.sha256, width: 40, height: 30 });
+      assert.deepEqual(await listed(), { sha256: older.sha256, width: 40, height: 30 });
+      assert.deepEqual((await owner.get('/api/boards?sort=recent')).body.find((b: { id: number }) => b.id === covers.id).cover,
+        { sha256: older.sha256, width: 40, height: 30 });
+    });
+
     it('a rejected PATCH changes nothing, the name included', async () => {
       const elsewhere = await newBoard(owner, 'Elsewhere');
       const foreign = (await upload(owner, elsewhere.id, await pngBuffer({ color: '#445566' }))).body;

@@ -49,7 +49,10 @@ interface BoardListRow {
   owner_name: string | null;
   pin_count: number;
   last_pin_at: string | null;
-  shown_cover_id: number | null;
+  // The shown cover (the chosen one, else the newest pin), null for an empty board.
+  cover_sha256: string | null;
+  cover_width: number | null;
+  cover_height: number | null;
 }
 
 type ShareRole = 'viewer' | 'editor';
@@ -90,8 +93,10 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     SELECT b.id, b.name, b.created_at, b.cover_pin_id, ${access.ROLE},
            (SELECT COUNT(*) FROM pins WHERE board_id = b.id) AS pin_count,
            (SELECT MAX(created_at) FROM pins WHERE board_id = b.id) AS last_pin_at,
-           COALESCE(b.cover_pin_id, (SELECT id FROM pins WHERE board_id = b.id ORDER BY id DESC LIMIT 1)) AS shown_cover_id
-    FROM boards b WHERE ${rule}`;
+           c.sha256 AS cover_sha256, c.width AS cover_width, c.height AS cover_height
+    FROM boards b
+    LEFT JOIN pins c ON c.id = COALESCE(b.cover_pin_id, (SELECT id FROM pins WHERE board_id = b.id ORDER BY id DESC LIMIT 1))
+    WHERE ${rule}`;
   const RECENT = 'ORDER BY COALESCE(last_pin_at, b.created_at) DESC, b.id DESC';
   const listBoards = db.prepare<{ user: number }, BoardListRow>(`${boardsSql(access.SEES)} ORDER BY b.name COLLATE NOCASE`);
   const listBoardsRecent = db.prepare<{ user: number }, BoardListRow>(`${boardsSql(access.SEES)} ${RECENT}`);
@@ -105,7 +110,6 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   const readBoard = (user: number, id: number | bigint) => boardRow.get({ user, id })!;
 
   function boardJson(row: BoardListRow) {
-    const cover = row.shown_cover_id ? getPin.get(row.shown_cover_id) : null;
     return {
       id: row.id,
       name: row.name,
@@ -113,7 +117,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       pin_count: row.pin_count,
       last_pin_at: row.last_pin_at,
       cover_pin_id: row.cover_pin_id,
-      cover: cover && { sha256: cover.sha256, width: cover.width, height: cover.height },
+      cover: row.cover_sha256 ? { sha256: row.cover_sha256, width: row.cover_width, height: row.cover_height } : null,
       role: row.role,
       owner_name: row.owner_name,
     };
