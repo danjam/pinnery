@@ -1,6 +1,8 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
@@ -154,15 +156,14 @@ describe('export and import', () => {
       req.on('error', reject);
     });
     req.write(zip.subarray(0, 10));
-    // Once the first is being received, a second is refused (poll: the request takes a moment to land).
-    let second;
-    for (let i = 0; i < 50; i++) {
-      second = await importZip(u, zip);
-      if (second.status === 409) break;
-      await new Promise((r) => setTimeout(r, 20));
-    }
-    assert.equal(second?.status, 409);
-    assert.match(second?.body.error, /already running/);
+    // It holds the lock once its upload is being spooled to a temp file.
+    const tmp = path.join(server.dataDir, 'tmp');
+    const spooling = () => fs.existsSync(tmp) && fs.readdirSync(tmp).some((f) => f.startsWith('import-'));
+    for (let i = 0; i < 250 && !spooling(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(spooling(), 'the first import is being received');
+    const second = await importZip(u, zip);
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already running/);
     req.end(zip.subarray(10));
     assert.equal(await first, 200);
     // and the next one goes through
