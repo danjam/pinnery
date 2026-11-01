@@ -70,10 +70,10 @@ export function createPending({ ttlMs = 10 * 60 * 1000, maxBytes = 256 * 1024 * 
   }
 
   function put(record: Omit<PendingEntry, 'expires'>): string {
-    if (!Buffer.isBuffer(record.buf)) throw new TypeError('pending entry must be a Buffer');
-    if (record.buf.length > maxBytes) throw new ImageError(413, 'upload too large');
+    const size = record.buf.byteLength;
+    if (size > maxBytes) throw new ImageError(413, 'upload too large');
     const token = crypto.randomBytes(16).toString('hex');
-    total += record.buf.length;
+    total += size;
     entries.set(token, { ...record, expires: Date.now() + ttlMs });
     prune(token, record.userId);
     return token;
