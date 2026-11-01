@@ -40,6 +40,10 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write      # signing the provenance attestation
+      attestations: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v7
 
@@ -56,6 +60,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           platforms: linux/amd64,linux/arm64
@@ -69,3 +74,27 @@ jobs:
             org.opencontainers.image.version=${{ needs.release-please.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          sbom: true           # a list of every package in the image, stored next to it in the registry
+
+      # A signed record that this image was built from this commit by this workflow. Check it with
+      # `gh attestation verify oci://ghcr.io/danjam/pinnery:<version> --owner danjam`.
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+  # Scans the published image for known vulnerabilities. Report only: the Debian base always carries
+  # some unfixed CVEs, and the image is already out. Its own job with no token permissions, and the
+  # action is pinned by commit (its version tags were hijacked in March 2026, GHSA-69fq-xp46-6x23).
+  scan:
+    needs: image
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ needs.image.outputs.digest }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '0'
