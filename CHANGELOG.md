@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.0](https://github.com/danjam/pinnery/compare/v0.2.0...v0.3.0) (2026-11-01)
+
+
+### Features
+
+* rewrite Pinnery in TypeScript (server, web app and extension) ([1dcd448](https://github.com/danjam/pinnery/commit/1dcd44839b23cb046ac3e71b2b266b81e30eb22b))
+* track the schema version and refuse databases from a newer Pinnery ([#77](https://github.com/danjam/pinnery/issues/77)) ([7a64d5e](https://github.com/danjam/pinnery/commit/7a64d5e839041ccc4aa476d01d2dbaf7be3b6aa7))
+
+
+### Bug Fixes
+
+* allow-list URL schemes in the extension's content script ([#71](https://github.com/danjam/pinnery/issues/71)) ([960ce9f](https://github.com/danjam/pinnery/commit/960ce9fe5098d04ff8b6a297d59ee702f5d52915))
+* cap requests at 1000 a minute per client ([#57](https://github.com/danjam/pinnery/issues/57)) ([24adee0](https://github.com/danjam/pinnery/commit/24adee00809adef62ae5c956e9fd725e439abd3f))
+* **deps:** update dependency node to v26 ([#52](https://github.com/danjam/pinnery/issues/52)) ([1aceab6](https://github.com/danjam/pinnery/commit/1aceab6d36d22c26a1b4259740b12ed208dd0bd2))
+* ship LICENSE and NOTICE in the image ([#63](https://github.com/danjam/pinnery/issues/63)) ([d7e66fd](https://github.com/danjam/pinnery/commit/d7e66fd146095040aed9022e832e7d87a2bbd4cf))
+* stop showing "false" in a viewer's board header ([#54](https://github.com/danjam/pinnery/issues/54)) ([e461576](https://github.com/danjam/pinnery/commit/e461576262983d64cb30f1af7b5cb6926f790578))
+
 ## [0.2.0](https://github.com/danjam/pinnery/compare/v0.1.0...v0.2.0) (2026-11-01)
 
 
