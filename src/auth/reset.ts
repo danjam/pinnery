@@ -93,7 +93,9 @@ export function createReset(db: Db, core: Core, links: Links, { mailer, publicUr
     if (pw.length < MIN_PASSWORD) return res.status(400).json({ error: `password must be at least ${MIN_PASSWORD} characters` });
     const user = getUser.get(row.user_id);
     if (!user) return res.status(404).json({ error: 'This reset link isn’t valid any more.' });
-    await setPassword(user.id, pw, null);
+    if (!await setPassword(user.id, pw, null, row.id)) {
+      return res.status(404).json({ error: 'This reset link isn’t valid any more — it may have been used or cancelled.' });
+    }
     startSession(res, user.id);
     notifyPasswordChanged(user, baseUrl(req));
     const { n } = db.prepare<[number], { n: number }>("SELECT COUNT(*) AS n FROM sessions WHERE kind = 'token' AND user_id = ?").get(user.id)!;

@@ -148,14 +148,18 @@ export function createCore(db: Db) {
   }
 
   // Set a user's password: clears a required change and cancels any outstanding reset links.
-  // Browser sessions other than `keepSessionId` are signed out; API tokens stay.
-  const storePassword = db.transaction((userId: number, hash: string, keepSessionId: number | null) => {
+  // Browser sessions other than `keepSessionId` are signed out; API tokens stay. With `linkId`, the
+  // emailed link that authorised it is claimed in the same transaction: if a concurrent request
+  // used it while this one was hashing, nothing changes and it returns false.
+  const storePassword = db.transaction((userId: number, hash: string, keepSessionId: number | null, linkId?: number | bigint) => {
+    if (linkId !== undefined && !db.prepare('DELETE FROM email_tokens WHERE id = ?').run(linkId).changes) return false;
     db.prepare('UPDATE users SET password_hash = ?, must_change_password = 0 WHERE id = ?').run(hash, userId);
     db.prepare("DELETE FROM email_tokens WHERE kind = 'reset' AND user_id = ?").run(userId);
     db.prepare("DELETE FROM sessions WHERE kind = 'session' AND user_id = ? AND id IS NOT ?").run(userId, keepSessionId ?? null);
+    return true;
   });
-  async function setPassword(userId: number, next: string, keepSessionId: number | null) {
-    storePassword(userId, await hashPassword(next), keepSessionId);
+  async function setPassword(userId: number, next: string, keepSessionId: number | null, linkId?: number | bigint) {
+    return storePassword(userId, await hashPassword(next), keepSessionId, linkId);
   }
 
   // Create a named API token. Prefixed so a leaked token is recognisable (secret scanners, logs);
