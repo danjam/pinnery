@@ -1,9 +1,11 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import path from 'node:path';
+import zlib from 'node:zlib';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
-import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
+import { avifBuffer, jpegBuffer, pngBuffer } from '../helpers/images.ts';
 import { newBoard, originalFile, rawPost, upload, type BoardRef } from '../helpers/pins.ts';
 
 describe('pins', () => {
@@ -48,6 +50,23 @@ describe('pins', () => {
     assert.equal(commit.body.pin.source_url, null);
   });
 
+  it('uploads AVIF and makes its thumbnails', async () => {
+    const r = await upload(alice, board.id, await avifBuffer({ width: 40, height: 30, color: '#808000' }));
+    assert.equal(r.status, 201);
+    assert.equal(r.body.mime, 'image/avif');
+    assert.equal(r.body.width, 40);
+    assert.equal(r.body.height, 30);
+    const orig = await alice.fetch(`/i/${r.body.sha256}`);
+    assert.equal(orig.headers.get('content-type'), 'image/avif');
+    // made at save time, and served as WebP
+    for (const size of [400, 800]) {
+      assert.ok(fs.existsSync(path.join(server.dataDir, 'thumbs', r.body.sha256.slice(0, 2), `${r.body.sha256}-${size}.webp`)), `thumb ${size}`);
+      const t = await alice.fetch(`/t/${size}/${r.body.sha256}`);
+      assert.equal(t.status, 200);
+      assert.equal(t.headers.get('content-type'), 'image/webp');
+    }
+  });
+
   it('rejects non-images, empty bodies, missing board and oversize uploads', async () => {
     assert.equal((await upload(alice, board.id, Buffer.from('definitely not an image'))).status, 415);
     assert.equal((await upload(alice, board.id, Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="5" height="5"/>'))).status, 415);
@@ -60,6 +79,17 @@ describe('pins', () => {
     assert.equal((await upload(server.anon(), board.id, await pngBuffer())).status, 401);
     const big = await upload(alice, board.id, Buffer.alloc(51 * 1024 * 1024));
     assert.equal(big.status, 413);
+  });
+
+  it('refuses images that would decode to more than the pixel limit', async () => {
+    // A tiny PNG whose header claims 20000x20000 (400 MP): rewrite IHDR's size and its CRC.
+    const png = await pngBuffer({ width: 8, height: 8 });
+    png.writeUInt32BE(20000, 16);
+    png.writeUInt32BE(20000, 20);
+    png.writeUInt32BE(zlib.crc32(png.subarray(12, 29)), 29);
+    const r = await upload(alice, board.id, png);
+    assert.equal(r.status, 413);
+    assert.match(r.body.error, /megapixels/);
   });
 
   it('cannot delete or move another user\'s pins', async () => {
@@ -97,5 +127,15 @@ describe('pins', () => {
     assert.deepEqual(del.body, { deleted: 3 });
     for (const p of pins) assert.ok(!fs.existsSync(originalFile(server, p.sha256)));
     assert.equal((await alice.post('/api/pins/delete', { ids: [] })).status, 400);
+  });
+
+  it('caps bulk requests at 1000 ids', async () => {
+    const ids = Array.from({ length: 1001 }, (_, i) => i + 1);
+    const del = await alice.post('/api/pins/delete', { ids });
+    assert.equal(del.status, 400);
+    assert.match(del.body.error, /at most 1000/);
+    assert.equal((await alice.post('/api/pins/move', { ids, board_id: board.id })).status, 400);
+    // 1000 is still allowed through to the access check (these ids aren't alice's: not found)
+    assert.equal((await alice.post('/api/pins/delete', { ids: ids.slice(0, 1000).map((i) => i + 1_000_000) })).status, 404);
   });
 });

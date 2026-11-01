@@ -73,7 +73,7 @@ describe('extension connect flow', () => {
   it('/connect/decide needs a session, same-origin and valid params', async () => {
     assert.equal((await decide(server.anon(), { ...params(), allow: true })).status, 401);
     assert.equal((await decide(gina, { ...params(), allow: true }, { 'sec-fetch-site': 'cross-site' })).status, 403);
-    assert.equal((await decide(gina, { ...params(), allow: true }, {})).status, 403);
+    assert.equal((await decide(gina, { ...params(), allow: true }, { 'sec-fetch-site': '' })).status, 403);
     assert.equal((await decide(gina, { ...params(), allow: true }, { origin: 'https://evil.example.com' })).status, 403);
     assert.equal((await decide(gina, { ...params({ redirect_uri: 'https://evil.example.com/' }), allow: true })).status, 400);
     // a matching Origin header is accepted when Sec-Fetch-Site is absent

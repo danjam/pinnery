@@ -85,5 +85,22 @@ describe('accounts (mail on)', () => {
       assert.equal(res.status, 409);
       assert.equal((await erin.get('/api/me')).body.email, 'erin@example.com');
     });
+
+    it('tells the old address and cancels its reset links', async () => {
+      const fay = await server.createUser('fay@example.com', 'fay-pass-1234');
+      const { id } = (await fay.get('/api/me')).body;
+      const reset = await admin.post(`/api/users/${id}/reset`);
+      assert.equal(reset.status, 201);
+      server.mail.clear();
+      await fay.post('/api/email', { email: 'fay.new@example.com', password: 'fay-pass-1234' });
+      const mail = await server.mail.waitFor((m) => m.to.includes('fay.new@example.com'));
+      const anon = server.anon({ ip: '127.0.0.45' });
+      assert.equal((await anon.post(`/api/confirm-email/${tokenFromLink(linkFrom(mail, '/confirm-email/'))}`)).status, 200);
+
+      const notice = await server.mail.waitFor((m) => m.to.includes('fay@example.com'));
+      assert.equal(notice.subject, 'Your Pinnery email was changed');
+      assert.match(notice.text, /fay\.new@example\.com/);
+      assert.equal((await anon.get(`/api/reset/${tokenFromLink(reset.body.link)}`)).status, 404);
+    });
   });
 });

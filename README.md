@@ -56,7 +56,7 @@ services:
     volumes:
       - ./data:/data                     # your images and database
     ports:
-      - "3420:3420"
+      - "3420:3420"                      # behind a proxy, drop this (see HTTPS below)
     # Optional extra lockdown. Pinnery works with or without these lines.
     read_only: true
     cap_drop: [ALL]
@@ -72,7 +72,7 @@ Start Pinnery with `docker compose up -d`, open your Pinnery address, and sign i
 
 Pinnery works over plain http, so `http://your-server:3420` is fine for trying it out. For everyday use, put it behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). A few things only work over HTTPS: installing Pinnery on mobile, sharing images to it, and the Copy and Share buttons for links.
 
-With no proxy in front, set `PINNERY_PROXIES: 0` (see [Proxies and sign-in limits](docs/proxies.md)).
+With a proxy in front, don't publish Pinnery's port: let the proxy reach it over a shared Docker network, or bind it to `127.0.0.1:3420:3420` if the proxy runs on the same machine. A published port lets anyone skip the proxy and fake their address to get round the sign-in limit. With no proxy in front, set `PINNERY_PROXIES: 0`. Both are explained in [Proxies and sign-in limits](docs/proxies.md).
 
 ## Documentation
 
