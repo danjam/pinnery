@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>Pin to Pinnery</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <!-- Same remembered theme as the app (shared origin), applied before the stylesheet loads. -->
+  <script>try{var d=document.documentElement,t=localStorage.getItem('pinnery.theme'),a=localStorage.getItem('pinnery.accent'),c={green:'#2d8545',blue:'#1971c2',orange:'#c2410c'}[a];if(t==='light'||t==='dark')d.dataset.theme=t;if(c){d.dataset.accent=a;document.querySelector('link[rel=icon]').href='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="'+c+'"/><circle cx="16" cy="13" r="5" fill="#fff"/><path d="M15 18h2v9l-1 2-1-2z" fill="#fff"/></svg>')}}catch(e){}</script>
+  <link rel="stylesheet" href="/css/app.css">
+  <link rel="stylesheet" href="/css/pick.css">
+</head>
+<body class="pick">
+  <header class="head">
+    <div class="brand"><svg class="logo" viewBox="0 0 32 32" width="22" height="22" aria-hidden="true"><circle cx="16" cy="16" r="14"/><circle cx="16" cy="13" r="5" fill="#fff"/><path d="M15 18h2v9l-1 2-1-2z" fill="#fff"/></svg>Pin to Pinnery</div>
+    <div class="preview" id="preview"><img id="thumb" alt=""><div class="caption" id="caption"></div></div>
+  </header>
+
+  <main id="main" class="hidden">
+    <input class="field" id="filter" type="search" placeholder="Choose a board…" autocomplete="off" spellcheck="false">
+    <div class="boards" id="boards" role="listbox"></div>
+  </main>
+
+  <!-- Expired / error, and the done and cancelled results when the window isn't closed for us. -->
+  <div class="notice hidden" id="notice">
+    <p id="notice-text"></p>
+    <div class="row" id="notice-actions"></div>
+  </div>
+
+  <footer class="foot" id="foot">
+    <div class="status" id="status"></div>
+    <button class="btn primary" id="pin" disabled></button>
+  </footer>
+
+  <script type="module" src="/js/pick.js"></script>
+</body>
+</html>

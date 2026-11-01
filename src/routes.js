@@ -1,0 +1,457 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import express from 'express';
+import { createAccess } from './access.js';
+import { linkBase } from './auth.js';
+import { fetchImage, MAX_BYTES } from './fetch.js';
+import { ImageError, THUMB_SIZES, isSha } from './images.js';
+import { message } from './mail.js';
+import { createPending } from './pending.js';
+import { createTransferRoutes } from './transfer.js';
+
+const toId = (v) => {
+  const n = Number(v);
+  return Number.isInteger(n) && n > 0 ? n : null;
+};
+const bad = (msg) => new ImageError(400, msg);
+const notFound = (what) => new ImageError(404, `${what} not found`);
+const placeholders = (n) => Array(n).fill('?').join(',');
+
+const PIN_COLS = 'id, board_id, sha256, width, height, mime, animated, source_url, page_title, created_at';
+
+const PICK_TOKEN_RE = /^[0-9a-f]{32}$/;
+
+// The JSON API (behind the bearer/cookie auth) and the pick router (authenticated by a pick
+// token alone — see createPickRoutes below) share the pending store and the board/pin helpers, so
+// one factory builds both. Everything is scoped to a user (req.user, or the pick's creator) through
+// access.js: another user's ids are simply not found.
+export function createRoutes(db, store, { dataDir, mailer, publicUrl = '' }) {
+  const api = express.Router();
+  api.use(express.json({ limit: '64kb' }));
+  const access = createAccess(db);
+
+  // ---- boards -------------------------------------------------------------------------------
+
+  // ?sort=recent orders by latest activity (last pin, else creation) — what the extension's picker wants.
+  const boardsSql = (rule) => `
+    SELECT b.id, b.name, b.created_at, b.cover_pin_id, ${access.ROLE},
+           (SELECT COUNT(*) FROM pins WHERE board_id = b.id) AS pin_count,
+           (SELECT MAX(created_at) FROM pins WHERE board_id = b.id) AS last_pin_at,
+           COALESCE(b.cover_pin_id, (SELECT id FROM pins WHERE board_id = b.id ORDER BY id DESC LIMIT 1)) AS shown_cover_id
+    FROM boards b WHERE ${rule}`;
+  const RECENT = 'ORDER BY COALESCE(last_pin_at, b.created_at) DESC, b.id DESC';
+  const listBoards = db.prepare(`${boardsSql(access.SEES)} ORDER BY b.name COLLATE NOCASE`);
+  const listBoardsRecent = db.prepare(`${boardsSql(access.SEES)} ${RECENT}`);
+  const boardRow = db.prepare(`${boardsSql(access.SEES)} AND b.id = @id`);
+  const getPin = db.prepare(`SELECT ${PIN_COLS} FROM pins WHERE id = ?`);
+  const insertBoard = db.prepare('INSERT INTO boards (name, owner_id) VALUES (?, ?)');
+  // role is the caller's standing (owner | editor | viewer); owner_name goes with it for "shared by".
+  const boardPublic = ({ id, name, cover_pin_id, created_at, role, owner_name }) => ({ id, name, cover_pin_id, created_at, role, owner_name });
+
+  function boardJson(row) {
+    const cover = row.shown_cover_id ? getPin.get(row.shown_cover_id) : null;
+    return {
+      id: row.id,
+      name: row.name,
+      created_at: row.created_at,
+      pin_count: row.pin_count,
+      last_pin_at: row.last_pin_at,
+      cover_pin_id: row.cover_pin_id,
+      cover: cover && { sha256: cover.sha256, width: cover.width, height: cover.height },
+      role: row.role,
+      owner_name: row.owner_name,
+    };
+  }
+
+  function cleanName(v) {
+    const name = typeof v === 'string' ? v.trim() : '';
+    if (!name) throw bad('name is required');
+    if (name.length > 100) throw bad('name is too long');
+    return name;
+  }
+
+  api.get('/boards', (req, res) => {
+    res.json((req.query.sort === 'recent' ? listBoardsRecent : listBoards).all({ user: req.user.id }).map(boardJson));
+  });
+
+  api.post('/boards', (req, res) => {
+    const name = cleanName(req.body?.name);
+    const { lastInsertRowid } = insertBoard.run(name, req.user.id);
+    res.status(201).json(boardJson(boardRow.get({ user: req.user.id, id: lastInsertRowid })));
+  });
+
+  // Rename and cover are the owner's.
+  api.patch('/boards/:id', (req, res) => {
+    const id = toId(req.params.id);
+    const board = id && access.ownsBoard(req.user.id, id);
+    if (!board) throw notFound('board');
+    const body = req.body || {};
+    if ('name' in body) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(cleanName(body.name), id);
+    if ('cover_pin_id' in body) {
+      let coverId = null;
+      if (body.cover_pin_id !== null) {
+        coverId = toId(body.cover_pin_id);
+        const pin = coverId && getPin.get(coverId);
+        if (!pin || pin.board_id !== id) throw bad('cover pin must belong to this board');
+      }
+      db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, id);
+    }
+    res.json(boardJson(boardRow.get({ user: req.user.id, id })));
+  });
+
+  // Delete a board. Body: { move_to: <board id> } re-homes its pins; otherwise they're deleted.
+  const deleteBoard = db.transaction((id, moveTo) => {
+    if (moveTo) {
+      db.prepare('UPDATE pins SET board_id = ? WHERE board_id = ?').run(moveTo, id);
+    } else {
+      deletePinRows(db.prepare('SELECT id FROM pins WHERE board_id = ?').all(id).map((r) => r.id));
+    }
+    db.prepare('DELETE FROM boards WHERE id = ?').run(id);
+  });
+
+  api.delete('/boards/:id', (req, res) => {
+    const id = toId(req.params.id);
+    if (!id || !access.ownsBoard(req.user.id, id)) throw notFound('board');
+    let moveTo = null;
+    if (req.body?.move_to != null) {
+      moveTo = toId(req.body.move_to);
+      if (!moveTo || moveTo === id || !access.canEditBoard(req.user.id, moveTo)) throw bad('invalid destination board');
+    }
+    deleteBoard(id, moveTo);
+    res.json({ ok: true });
+  });
+
+  api.get('/boards/:id/pins', (req, res) => {
+    const id = toId(req.params.id);
+    const board = id && access.canSeeBoard(req.user.id, id);
+    if (!board) throw notFound('board');
+    const order = req.query.order === 'asc' ? 'ASC' : 'DESC';
+    const pins = db.prepare(`SELECT ${PIN_COLS} FROM pins WHERE board_id = ? ORDER BY id ${order}`).all(id);
+    res.json({ board: boardPublic(board), pins });
+  });
+
+  // ---- sharing (the owner's) ----------------------------------------------------------------
+  // A share is one row per (board, user) with a role; PUT adds or changes it, DELETE removes it.
+  // Someone newly given a board hears about it by email when mail is on — quietly: a failed send
+  // is logged by mail.js and never fails the share.
+
+  const listShares = db.prepare(`
+    SELECT s.user_id, u.display_name, u.email, s.role, s.created_at
+    FROM board_shares s JOIN users u ON u.id = s.user_id WHERE s.board_id = ? ORDER BY u.display_name COLLATE NOCASE, u.id`);
+  const getShare = db.prepare('SELECT user_id, role FROM board_shares WHERE board_id = ? AND user_id = ?');
+  const putShare = db.prepare(`
+    INSERT INTO board_shares (board_id, user_id, role) VALUES (?, ?, ?)
+    ON CONFLICT(board_id, user_id) DO UPDATE SET role = excluded.role`);
+  const dropShare = db.prepare('DELETE FROM board_shares WHERE board_id = ? AND user_id = ?');
+  const getUser = db.prepare('SELECT id, display_name, email FROM users WHERE id = ?');
+  // Everyone else, for the share picker: the least that tells people apart ("Name · email").
+  const directory = db.prepare('SELECT id, display_name, email FROM users WHERE id != ? ORDER BY display_name COLLATE NOCASE, id');
+
+  const ownedBoard = (req) => {
+    const id = toId(req.params.id);
+    const board = id && access.ownsBoard(req.user.id, id);
+    if (!board) throw notFound('board');
+    return board;
+  };
+
+  api.get('/users/directory', (req, res) => res.json(directory.all(req.user.id)));
+
+  api.get('/boards/:id/shares', (req, res) => res.json(listShares.all(ownedBoard(req).id)));
+
+  // Body: { role: 'viewer' | 'editor' }. Answers with the share row; `added` says whether it's new.
+  api.put('/boards/:id/shares/:userId', (req, res) => {
+    const board = ownedBoard(req);
+    const role = req.body?.role;
+    if (role !== 'viewer' && role !== 'editor') throw bad('role must be viewer or editor');
+    const userId = toId(req.params.userId);
+    const user = userId && getUser.get(userId);
+    if (!user) throw notFound('user');
+    if (user.id === req.user.id) throw bad('that’s your own board');
+    const added = !getShare.get(board.id, user.id);
+    putShare.run(board.id, user.id, role);
+    if (added && mailer?.enabled) {
+      const link = `${linkBase(req, publicUrl)}/b/${board.id}`;
+      mailer.send({ to: user.email, ...message({
+        subject: `${req.user.display_name} shared “${board.name}” with you (${role === 'editor' ? 'Editor' : 'Viewer'})`,
+        lines: [`Hi ${user.display_name},`,
+          `${req.user.display_name} (${req.user.email}) shared the Pinnery board “${board.name}” with you as ${role === 'editor' ? 'an editor: you can see its pins and add or delete them' : 'a viewer: you can see its pins'}.`],
+        link, linkText: 'Open the board',
+      }) }).catch(() => {});
+    }
+    res.json({ ...listShares.all(board.id).find((s) => s.user_id === user.id), added });
+  });
+
+  api.delete('/boards/:id/shares/:userId', (req, res) => {
+    const board = ownedBoard(req);
+    const userId = toId(req.params.userId);
+    if (!userId || !dropShare.run(board.id, userId).changes) throw notFound('share');
+    res.json({ ok: true });
+  });
+
+  // ---- pins ---------------------------------------------------------------------------------
+
+  const insertPin = db.prepare(`
+    INSERT INTO pins (board_id, sha256, width, height, mime, animated, source_url, page_title)
+    VALUES (@board_id, @sha256, @width, @height, @mime, @animated, @source_url, @page_title)`);
+
+  function cleanText(v, max) {
+    if (v == null || v === '') return null;
+    if (typeof v !== 'string') throw bad('expected a string');
+    return v.slice(0, max);
+  }
+
+  function insert(boardId, info, { source_url, page_title }) {
+    const { lastInsertRowid } = insertPin.run({ board_id: boardId, ...info, source_url, page_title });
+    return getPin.get(lastInsertRowid);
+  }
+
+  // Fingerprint, store and insert. Identical bytes share one file (see images.js), so the same
+  // image pinned twice — by anyone — is two rows and one original.
+  async function savePin(userId, boardId, buf, meta) {
+    if (!access.canEditBoard(userId, boardId)) throw notFound('board');
+    const info = await store.fingerprint(buf);
+    await store.save(buf, info);
+    return insert(boardId, info, meta);
+  }
+
+  // Server-side fetch of an image URL. Body: { board_id, url, source_url?, page_title? }.
+  api.post('/pins/url', async (req, res) => {
+    const body = req.body || {};
+    const boardId = toId(body.board_id);
+    if (!boardId) throw bad('board_id is required');
+    if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
+    if (!access.canEditBoard(req.user.id, boardId)) throw notFound('board');
+    const url = body.url.trim();
+    const pageUrl = cleanText(body.source_url, 2048);
+    const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
+    const pin = await savePin(req.user.id, boardId, buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) });
+    res.status(201).json(pin);
+  });
+
+  // Raw upload: the body is the file. Query: board_id, plus either name (a file upload — used as
+  // the title) or source_url and page_title (a client that fetched the bytes itself).
+  api.post('/pins/upload', express.raw({ type: () => true, limit: MAX_BYTES }), async (req, res) => {
+    const boardId = toId(req.query.board_id);
+    if (!boardId) throw bad('board_id is required');
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
+    const q = (k) => (typeof req.query[k] === 'string' ? req.query[k] : null);
+    const pin = await savePin(req.user.id, boardId, req.body, {
+      source_url: cleanText(q('source_url'), 2048),
+      page_title: cleanText(q('page_title') ?? q('name'), 500),
+    });
+    res.status(201).json(pin);
+  });
+
+  // ---- picks (the extension and the share target) -------------------------------------------
+  // The client sends the image first and chooses the board afterwards, on a page the server
+  // serves (/pick/:token, see createPickRoutes). Here the bytes are fingerprinted and parked
+  // board-less under a token (see pending.js). That token is the pick page's only credential, so
+  // it's returned once, to the bearer that created it. The entry remembers who that was.
+
+  const pending = createPending();
+
+  async function createPick(buf, meta, userId) {
+    const info = await store.fingerprint(buf);
+    return { token: pending.put({ buf, info, meta, userId }) };
+  }
+
+  // Raw upload: the body is the file. Query: source_url and page_title.
+  api.post('/pick/upload', express.raw({ type: () => true, limit: MAX_BYTES }), async (req, res) => {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
+    const q = (k) => (typeof req.query[k] === 'string' ? req.query[k] : null);
+    res.status(201).json(await createPick(req.body, { source_url: cleanText(q('source_url'), 2048), page_title: cleanText(q('page_title'), 500) }, req.user.id));
+  });
+
+  // Server-side fetch. Body: { url, source_url?, page_title? }.
+  api.post('/pick/url', async (req, res) => {
+    const body = req.body || {};
+    if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
+    const url = body.url.trim();
+    const pageUrl = cleanText(body.source_url, 2048);
+    const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
+    res.status(201).json(await createPick(buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) }, req.user.id));
+  });
+
+  api.get('/pins/:id', (req, res) => {
+    const pin = access.canSeePin(req.user.id, toId(req.params.id) ?? 0);
+    if (!pin) throw notFound('pin');
+    res.json(pin);
+  });
+
+  function idList(v) {
+    if (!Array.isArray(v) || !v.length) throw bad('ids must be a non-empty array');
+    const ids = v.map(toId);
+    if (ids.includes(null)) throw bad('invalid pin id');
+    return [...new Set(ids)];
+  }
+
+  // Delete pin rows and, for any hash no longer referenced, the files. Call inside a transaction.
+  function deletePinRows(ids) {
+    if (!ids.length) return 0;
+    const ph = placeholders(ids.length);
+    const shas = db.prepare(`SELECT DISTINCT sha256 FROM pins WHERE id IN (${ph})`).all(...ids).map((r) => r.sha256);
+    const { changes } = db.prepare(`DELETE FROM pins WHERE id IN (${ph})`).run(...ids);
+    const stillUsed = db.prepare('SELECT 1 FROM pins WHERE sha256 = ? LIMIT 1');
+    for (const sha of shas) if (!stillUsed.get(sha)) store.removeFiles(sha);
+    return changes;
+  }
+  const deletePins = db.transaction(deletePinRows);
+
+  // Move pins; a board whose cover moves away falls back to its newest pin.
+  const movePins = db.transaction((ids, boardId) => {
+    const ph = placeholders(ids.length);
+    db.prepare(`UPDATE boards SET cover_pin_id = NULL WHERE cover_pin_id IN (${ph})`).run(...ids);
+    return db.prepare(`UPDATE pins SET board_id = ? WHERE id IN (${ph})`).run(boardId, ...ids).changes;
+  });
+
+  api.delete('/pins/:id', (req, res) => {
+    const id = toId(req.params.id);
+    if (!id || !access.canEditPins(req.user.id, [id])) throw notFound('pin');
+    deletePins([id]);
+    res.json({ ok: true });
+  });
+
+  // Bulk operations are all or nothing: one pin that isn't the user's and the whole list is "not found".
+  api.post('/pins/delete', (req, res) => {
+    const ids = idList(req.body?.ids);
+    if (!access.canEditPins(req.user.id, ids)) throw notFound('pin');
+    res.json({ deleted: deletePins(ids) });
+  });
+
+  // Moving pins out of a board is the owner's call; into one, an editor's.
+  api.post('/pins/move', (req, res) => {
+    const ids = idList(req.body?.ids);
+    if (!access.ownsPins(req.user.id, ids)) throw notFound('pin');
+    const boardId = toId(req.body?.board_id);
+    if (!boardId || !access.canEditBoard(req.user.id, boardId)) throw bad('invalid destination board');
+    res.json({ moved: movePins(ids, boardId) });
+  });
+
+  // ---- export / import (see transfer.js) ---------------------------------------------------
+
+  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText }));
+
+  // deletePinRows is for users.js, which deletes a user's boards inside its own transaction.
+  return { api, pick: createPickRoutes(), deletePinRows };
+
+  // ---- /pick/:token — the board picker page and its token-scoped API ------------------------
+  // No session or bearer: the pick token in the path is the credential, good for exactly one
+  // parked image, acting as the user who parked it. It may list that user's boards, create one,
+  // see the image, and commit or discard it. Committing or discarding consumes it. Nothing else is
+  // reachable.
+
+  function createPickRoutes() {
+    const pick = express.Router();
+    const page = path.join(path.dirname(fileURLToPath(import.meta.url)), 'public', 'pick.html');
+    // The picker offers the boards the user can pin into, most recent first.
+    const pickBoards = db.prepare(`${boardsSql(access.EDITS)} ${RECENT}`);
+
+    // Everything the page shows and does is a sub-route of the token. The page itself is served
+    // for any well-formed token — an expired one gets the "expired" notice from the page's JS —
+    // and the done/cancelled pages come after the token has been consumed, so they skip the check.
+    pick.use('/:token', (req, res, next) => {
+      if (!PICK_TOKEN_RE.test(req.params.token)) return res.status(404).type('text').send('not found');
+      res.set('Cache-Control', 'no-store');
+      res.set('Referrer-Policy', 'no-referrer');
+      next();
+    });
+    pick.get(['/:token', '/:token/done', '/:token/cancelled'], (req, res) => res.sendFile(page));
+
+    const scoped = express.Router({ mergeParams: true });
+    scoped.use(express.json({ limit: '4kb' }));
+    scoped.use((req, res, next) => {
+      const entry = pending.get(req.params.token);
+      if (!entry) throw new ImageError(410, 'this pick has expired — right-click the image again');
+      req.pick = entry;
+      next();
+    });
+
+    // owner_name only for a board shared with the user (as an editor), so the page can mark it.
+    const pickBoard = (row) => {
+      const b = boardJson(row);
+      return { id: b.id, name: b.name, pin_count: b.pin_count, cover: b.cover && { sha256: b.cover.sha256 }, owner_name: b.role === 'owner' ? null : b.owner_name };
+    };
+    const boards = (req) => pickBoards.all({ user: req.pick.userId }).map(pickBoard);
+
+    // The image's details and the boards, most recent first.
+    scoped.get('/info', (req, res) => {
+      const { info, meta, expires } = req.pick;
+      res.json({
+        item: { width: info.width, height: info.height, mime: info.mime, animated: info.animated, ...meta, expires_in: Math.max(0, Math.round((expires - Date.now()) / 1000)) },
+        boards: boards(req),
+      });
+    });
+
+    scoped.get('/boards', (req, res) => res.json(boards(req)));
+
+    scoped.post('/boards', (req, res) => {
+      const { lastInsertRowid } = insertBoard.run(cleanName(req.body?.name), req.pick.userId);
+      res.status(201).json(pickBoard(boardRow.get({ user: req.pick.userId, id: lastInsertRowid })));
+    });
+
+    // The parked image itself, as a thumbnail.
+    scoped.get('/preview', async (req, res) => {
+      res.type('image/webp').send(await store.makeThumb(req.pick.buf, 400));
+    });
+
+    // Thumbnails the page needs: covers of the user's boards. Nothing else.
+    scoped.get('/t/:size/:sha', async (req, res) => {
+      const size = Number(req.params.size);
+      const { sha } = req.params;
+      const file = THUMB_SIZES.includes(size) && isSha(sha) && access.canSeeCoverSha(req.pick.userId, sha) ? await store.thumb(sha, size) : null;
+      if (!file) return res.sendStatus(404);
+      res.set('Cache-Control', 'private, max-age=600');
+      res.type('image/webp').sendFile(file);
+    });
+
+    // Body: { board_id }. Saves the image to that board and consumes the token.
+    scoped.post('/commit', async (req, res) => {
+      const boardId = toId(req.body?.board_id);
+      const board = boardId && access.canEditBoard(req.pick.userId, boardId);
+      if (!board) throw notFound('board');
+      const { buf, info, meta } = pending.take(req.params.token);
+      await store.save(buf, info);
+      res.status(201).json({ pin: insert(boardId, info, meta), board: { id: board.id, name: board.name } });
+    });
+
+    scoped.post('/discard', (req, res) => {
+      pending.drop(req.params.token);
+      res.json({ ok: true });
+    });
+
+    pick.use('/:token', scoped);
+    return pick;
+  }
+}
+
+// Image routes: originals by hash and thumbnails by size, for a signed-in user with a pin carrying
+// that hash on a board they can see. Content-addressed, so the browser may keep them for good —
+// but only its own copy (private): the answer depends on who asks.
+export function createImageRoutes(db, store) {
+  const r = express.Router();
+  const access = createAccess(db);
+  const mimeFor = (req, sha) => isSha(sha) && access.canSeeSha(req.user.id, sha);
+  const CACHE = 'private, max-age=31536000, immutable';
+
+  r.get('/i/:sha', (req, res) => {
+    const { sha } = req.params;
+    const row = mimeFor(req, sha);
+    const file = row && store.original(sha);
+    if (!file) return res.sendStatus(404);
+    res.set('Cache-Control', CACHE);
+    res.set('Content-Security-Policy', "default-src 'none'");
+    res.type(row.mime).sendFile(file);
+  });
+
+  r.get('/t/:size/:sha', async (req, res) => {
+    const size = Number(req.params.size);
+    const { sha } = req.params;
+    if (!THUMB_SIZES.includes(size) || !mimeFor(req, sha)) return res.sendStatus(404);
+    const file = await store.thumb(sha, size);
+    if (!file) return res.sendStatus(404);
+    res.set('Cache-Control', CACHE);
+    res.type('image/webp').sendFile(file);
+  });
+
+  return r;
+}

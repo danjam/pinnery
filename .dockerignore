@@ -1,0 +1,9 @@
+node_modules
+data
+.env
+.env.*
+PLAN.md
+.git
+.gitignore
+compose.yaml
+README.md

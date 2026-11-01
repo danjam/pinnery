@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="color-scheme" content="light dark">
+  <title>Pinnery options</title>
+  <link rel="stylesheet" href="ui.css">
+  <style>
+    body { display: grid; place-items: start center; padding: calc(var(--space-5) + var(--space-2)) var(--space-3); min-height: 100vh; }
+    .card {
+      width: min(440px, 100%);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: var(--space-4);
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-4);
+    }
+    form, section { display: flex; flex-direction: column; gap: var(--space-3); }
+    h1 { margin: 0; font-size: 20px; }
+    h2 { margin: 0; font-size: 14px; }
+    p { margin: 0; }
+    label { display: block; font-weight: 600; margin-bottom: var(--space-1); }
+    .row { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+    .connected { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3); border-radius: 12px; background: var(--surface-2); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ok); flex: none; }
+    .dot.pending { background: var(--muted); }
+    .dot.bad { background: var(--danger); }
+    .update { padding: var(--space-2) var(--space-3); border-radius: 10px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .update a { color: inherit; font-weight: 700; }
+    .connected .what { flex: 1; min-width: 0; }
+    .connected .what a { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; color: inherit; text-decoration: none; }
+    .connected .what a:hover { text-decoration: underline; }
+    .pill { align-self: flex-start; }
+    /* Standing warning for a plain-http server address (options.js). */
+    .warn {
+      display: flex;
+      gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border-radius: 10px;
+      background: color-mix(in srgb, var(--danger) 10%, transparent);
+      color: var(--danger);
+      font-size: 13px;
+    }
+    .warn .icon { margin-top: 1px; }
+    ol { margin: var(--space-2) 0 0; padding-left: var(--space-4); color: var(--muted); }
+    ol li { margin: var(--space-1) 0; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <div class="brand"><img src="icons/icon32.png" alt="">Pinnery</div>
+
+    <form id="connect" class="hidden" autocomplete="off">
+      <h1>Connect to your server</h1>
+      <p class="muted">Connect opens your Pinnery server, where you sign in (if you aren't already) and approve this browser. The extension gets its own token — it never sees your password. Tokens are listed and revoked from Pinnery's settings page.</p>
+      <div>
+        <label for="server">Server address</label>
+        <input class="field" id="server" type="text" placeholder="https://pinnery.example.com" required>
+      </div>
+      <div class="warn hidden" id="connect-warn" role="alert"></div>
+      <div>
+        <label for="name">Name for this browser</label>
+        <input class="field" id="name" type="text" maxlength="100" required>
+      </div>
+      <div class="row">
+        <button class="btn primary" type="submit" id="connect-btn">Connect</button>
+        <span class="error" id="connect-error"></span>
+      </div>
+    </form>
+
+    <section id="status" class="hidden">
+      <h1 id="status-title">Connected</h1>
+      <div class="connected">
+        <span class="dot" id="status-dot"></span>
+        <div class="what"><a id="status-server" target="_blank" rel="noopener"></a><span class="muted" id="status-name"></span></div>
+      </div>
+      <div class="warn hidden" id="status-warn" role="alert"></div>
+      <div class="row">
+        <button class="btn" id="test">Test connection</button>
+        <button class="btn danger" id="disconnect">Disconnect</button>
+      </div>
+      <div class="pill hidden" id="check" role="status"></div>
+      <div class="update hidden" id="update" role="status"></div>
+      <div>
+        <h2>To use the extension:</h2>
+        <ol>
+          <li>Right-click any image on a web page.</li>
+          <li>Choose <b>Pin to Pinnery</b>.</li>
+          <li>Pick a board and click <b>Pin</b>.</li>
+        </ol>
+      </div>
+    </section>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

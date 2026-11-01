@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Create your account — Pinnery</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#d6336c">
+  <script>try{var d=document.documentElement,t=localStorage.getItem('pinnery.theme'),a=localStorage.getItem('pinnery.accent'),c={green:'#2d8545',blue:'#1971c2',orange:'#c2410c'}[a];if(t==='light'||t==='dark')d.dataset.theme=t;if(c){d.dataset.accent=a;document.querySelector('link[rel=icon]').href='data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="14" fill="'+c+'"/><circle cx="16" cy="13" r="5" fill="#fff"/><path d="M15 18h2v9l-1 2-1-2z" fill="#fff"/></svg>')}}catch(e){}</script>
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body class="login-page">
+  <div class="login" id="card">
+    <h1 class="brand"><svg class="logo" viewBox="0 0 32 32" width="32" height="32" aria-hidden="true"><circle cx="16" cy="16" r="14"/><circle cx="16" cy="13" r="5" fill="#fff"/><path d="M15 18h2v9l-1 2-1-2z" fill="#fff"/></svg>Pinnery</h1>
+    <h2>Create your account</h2>
+    <p class="muted">You’ve been invited to Pinnery. Choose a name and a password.</p>
+    <form id="form" autocomplete="on" hidden>
+      <label for="email" class="visually-hidden">Email</label>
+      <input id="email" name="email" type="email" readonly autocomplete="username" title="The email this invite was sent to">
+      <label for="name" class="visually-hidden">Display name</label>
+      <input id="name" name="name" placeholder="Display name" required maxlength="100" autofocus autocomplete="nickname">
+      <label for="password" class="visually-hidden">Password</label>
+      <input id="password" name="password" type="password" placeholder="Password (at least 8 characters)" required minlength="8" autocomplete="new-password">
+      <label for="again" class="visually-hidden">Password again</label>
+      <input id="again" name="again" type="password" placeholder="Password again" required minlength="8" autocomplete="new-password">
+      <button class="btn primary" type="submit">Create account</button>
+    </form>
+    <p class="error" id="error" hidden></p>
+  </div>
+  <script type="module">
+    const card = document.getElementById('card');
+    const error = document.getElementById('error');
+    const fail = (msg) => { error.textContent = msg; error.hidden = false; };
+    const token = location.pathname.split('/').pop();
+    // Show a message in place of the form (an unusable link, or a finished step), keeping the brand.
+    const replace = (...nodes) => { card.replaceChildren(card.firstElementChild, ...nodes, error); };
+    const p = (text, cls = 'muted') => Object.assign(document.createElement('p'), { textContent: text, className: cls });
+    const link = (href, text) => { const a = document.createElement('a'); a.className = 'btn primary'; a.href = href; a.textContent = text; return a; };
+    const api = async (method, path, body) => {
+      const res = await fetch(path, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body && JSON.stringify(body) });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Something went wrong (${res.status})`);
+      return data;
+    };
+    const form = document.getElementById('form');
+    try {
+      const { email } = await api('GET', `/api/signup/${token}`);
+      form.email.value = email;
+      form.hidden = false;
+      form.name.focus();
+    } catch (e) {
+      replace(p(e.message, 'muted'), link('/login', 'Sign in'));
+    }
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      error.hidden = true;
+      if (form.password.value !== form.again.value) { fail('The passwords don’t match'); form.again.select(); return; }
+      try {
+        await api('POST', `/api/signup/${token}`, { display_name: form.name.value, password: form.password.value });
+        location.replace('/');
+      } catch (err) {
+        fail(err.message);
+      }
+    });
+  </script>
+</body>
+</html>

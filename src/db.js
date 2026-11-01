@@ -1,0 +1,129 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import Database from 'better-sqlite3';
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS users (
+  id                    INTEGER PRIMARY KEY,
+  email                 TEXT NOT NULL UNIQUE,     -- trimmed and lowercased
+  display_name          TEXT NOT NULL,
+  password_hash         TEXT NOT NULL,            -- salt:scrypt, see auth.js
+  is_admin              INTEGER NOT NULL DEFAULT 0,
+  must_change_password  INTEGER NOT NULL DEFAULT 0,
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS boards (
+  id            INTEGER PRIMARY KEY,
+  name          TEXT NOT NULL,
+  owner_id      INTEGER NOT NULL REFERENCES users(id),
+  cover_pin_id  INTEGER REFERENCES pins(id) ON DELETE SET NULL,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS pins (
+  id          INTEGER PRIMARY KEY,
+  board_id    INTEGER NOT NULL REFERENCES boards(id),
+  sha256      TEXT NOT NULL,
+  width       INTEGER NOT NULL,
+  height      INTEGER NOT NULL,
+  mime        TEXT NOT NULL,
+  animated    INTEGER NOT NULL DEFAULT 0,
+  source_url  TEXT,
+  page_title  TEXT,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS pins_board ON pins(board_id, id);
+CREATE INDEX IF NOT EXISTS pins_sha256 ON pins(sha256);
+
+-- A board shared with another user: a viewer looks, an editor also adds and deletes pins in it.
+-- Everything else stays the owner's (see access.js). Goes with the board or the user.
+CREATE TABLE IF NOT EXISTS board_shares (
+  board_id    INTEGER NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role        TEXT NOT NULL CHECK (role IN ('viewer', 'editor')),
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  PRIMARY KEY (board_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS board_shares_user ON board_shares(user_id);
+
+-- Key/value: password_hash (the PINNERY_PASSWORD last seen) and seed_admin_id (see auth.js).
+CREATE TABLE IF NOT EXISTS settings (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
+
+-- Browser sessions and API tokens (kind = 'token'), each belonging to a user.
+CREATE TABLE IF NOT EXISTS sessions (
+  id            INTEGER PRIMARY KEY,
+  token_hash    TEXT NOT NULL UNIQUE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind          TEXT NOT NULL DEFAULT 'session',
+  name          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  last_used_at  TEXT,
+  expires_at    TEXT
+);
+
+-- Single-use links sent by email (or copied by hand): invites, password resets and email-change
+-- confirmations. Only the token's hash is kept, so a link can't be shown again after it's made.
+-- user_id is the inviter for an invite, else the user the link acts on; it goes with the user.
+CREATE TABLE IF NOT EXISTS email_tokens (
+  id          INTEGER PRIMARY KEY,
+  token_hash  TEXT NOT NULL UNIQUE,
+  kind        TEXT NOT NULL,            -- invite | reset | email_change
+  email       TEXT NOT NULL,            -- invitee, account email, or the new address
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  expires_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS email_tokens_user ON email_tokens(user_id, kind);
+`;
+
+export function openDb(dataDir) {
+  fs.mkdirSync(dataDir, { recursive: true });
+  const db = new Database(path.join(dataDir, 'pinnery.db'));
+  db.pragma('journal_mode = WAL');
+  db.pragma('synchronous = NORMAL');
+  db.pragma('foreign_keys = ON');
+  db.pragma('busy_timeout = 5000');
+  if (preAccounts(db)) backup(db, dataDir);
+  db.exec(SCHEMA);
+  migrate(db);
+  return db;
+}
+
+const hasColumn = (db, table, column) => db.pragma(`table_info(${table})`).some((c) => c.name === column);
+
+// A database from before accounts: it has sessions, but they belong to nobody. Snapshot it before
+// the schema changes below, to <dataDir>/backups/pre-accounts-<timestamp>.db.
+const preAccounts = (db) => db.pragma('table_info(sessions)').length > 0 && !hasColumn(db, 'sessions', 'user_id');
+
+function backup(db, dataDir) {
+  const dir = path.join(dataDir, 'backups');
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, `pre-accounts-${new Date().toISOString().replace(/[:.]/g, '-')}.db`);
+  db.prepare('VACUUM INTO ?').run(file);
+  console.log(`accounts: backed up the database to ${file}`);
+}
+
+function migrate(db) {
+  // Databases from before duplicate detection was removed carry a NOT NULL dhash column and a
+  // dupe_threshold setting; neither is written any more.
+  if (hasColumn(db, 'pins', 'dhash')) db.exec('ALTER TABLE pins DROP COLUMN dhash');
+  db.prepare("DELETE FROM settings WHERE key = 'dupe_threshold'").run();
+  // Databases from before accounts get the owner columns nullable (SQLite can't add a NOT NULL
+  // foreign key to an existing table); auth.js fills them in when it seeds the admin.
+  if (!hasColumn(db, 'boards', 'owner_id')) db.exec('ALTER TABLE boards ADD COLUMN owner_id INTEGER REFERENCES users(id)');
+  if (!hasColumn(db, 'sessions', 'user_id')) db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+}
+
+export function getSetting(db, key) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(key);
+  return row ? row.value : null;
+}
+
+export function setSetting(db, key, value) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, String(value));
+}
