@@ -1,7 +1,7 @@
 {
   "name": "pinnery",
   "version": "0.2.0",
-  "description": "Self-hosted single-user image boards",
+  "description": "Self-hosted image boards with accounts and sharing",
   "license": "MIT",
   "private": true,
   "type": "module",

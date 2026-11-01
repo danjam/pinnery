@@ -3,10 +3,21 @@ Third-party notices
 
 Pinnery is MIT licensed (see LICENSE). It bundles the following third-party work:
 
+libvips
+-------
+
+The Docker image includes sharp's prebuilt libvips binaries, from the @img/sharp-libvips-*
+npm packages. libvips and several of the libraries built into it (glib, libheif, librsvg,
+pango and others) are licensed under the GNU LGPL, version 3 or later, and are loaded as
+separate shared libraries. libvips' source is at https://github.com/libvips/libvips. The
+build scripts, versions and licences of every bundled library are at
+https://github.com/lovell/sharp-libvips. In the image, the texts of the GNU LGPL and GPL,
+version 3, are at /usr/share/common-licenses/LGPL-3 and /usr/share/common-licenses/GPL-3.
+
 Material Design Icons
 ---------------------
 
-The SVG icon paths in src/public/js/icons.js and extension/lib/icons.js are copied from
+The SVG icon paths in src/public/js/icons.ts and extension/lib/icons.ts are copied from
 Material Design Icons by Pictogrammers (https://pictogrammers.com/library/mdi/), as
 published in the @mdi/js npm package, version 7.4.47. Only the icons Pinnery uses are included.
 
