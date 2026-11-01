@@ -187,6 +187,11 @@ app.use((err, req, res, next) => {
 });
 
 sweep();
-app.listen(PORT, '0.0.0.0', () => {
+// Express 5 hands a failed bind (e.g. the port is taken) to this callback instead of throwing.
+app.listen(PORT, '0.0.0.0', (err) => {
+  if (err) {
+    console.error(`can't listen on :${PORT}: ${err.message}`);
+    process.exit(1);
+  }
   console.log(`pinnery ${VERSION} listening on :${PORT}, data in ${DATA_DIR}`);
 });
