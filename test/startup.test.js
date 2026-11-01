@@ -40,7 +40,7 @@ describe('startup', () => {
   });
 });
 
-describe('PINNERY_TRUST_PROXY=true', () => {
+describe('PINNERY_PROXIES not a number', () => {
   it('refuses to start', { timeout: 10_000 }, async (t) => {
     const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
     t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
@@ -50,7 +50,7 @@ describe('PINNERY_TRUST_PROXY=true', () => {
       PORT: '0',
       PINNERY_ADMIN_EMAIL: 'admin@example.com',
       PINNERY_PASSWORD: 'initial-pass-1',
-      PINNERY_TRUST_PROXY: 'true',
+      PINNERY_PROXIES: 'true',
     };
     const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
     t.after(() => child.kill('SIGKILL'));
@@ -58,6 +58,6 @@ describe('PINNERY_TRUST_PROXY=true', () => {
     child.stderr.on('data', (d) => { out += d; });
     const code = await new Promise((resolve) => child.once('exit', resolve));
     assert.equal(code, 1);
-    assert.match(out, /PINNERY_TRUST_PROXY=true .*refusing to start/);
+    assert.match(out, /PINNERY_PROXIES must be the number of proxies.*refusing to start/);
   });
 });

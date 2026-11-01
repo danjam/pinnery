@@ -19,7 +19,7 @@ const loginOverHttps = (server) => server.anon().fetch('/api/login', {
   headers: { 'X-Forwarded-Proto': 'https', 'X-Forwarded-For': '127.0.2.1' },
 });
 
-describe('PINNERY_TRUST_PROXY unset (trusts one proxy)', () => {
+describe('PINNERY_PROXIES unset (one proxy)', () => {
   let server;
   before(async () => {
     server = await startServer();
@@ -41,10 +41,10 @@ describe('PINNERY_TRUST_PROXY unset (trusts one proxy)', () => {
   });
 });
 
-describe('PINNERY_TRUST_PROXY=false', () => {
+describe('PINNERY_PROXIES=0', () => {
   let server;
   before(async () => {
-    server = await startServer({ env: { PINNERY_TRUST_PROXY: 'false' } });
+    server = await startServer({ env: { PINNERY_PROXIES: '0' } });
     await server.createUser(EMAIL, PASSWORD);
   });
   after(() => server.stop());
@@ -57,7 +57,7 @@ describe('PINNERY_TRUST_PROXY=false', () => {
 
   it('ignores X-Forwarded-Proto for the cookie', async (t) => {
     // the throttle above now blocks 127.0.0.1, so start clean
-    const fresh = await startServer({ env: { PINNERY_TRUST_PROXY: 'false' } });
+    const fresh = await startServer({ env: { PINNERY_PROXIES: '0' } });
     t.after(() => fresh.stop());
     await fresh.createUser(EMAIL, PASSWORD);
     const res = await loginOverHttps(fresh);

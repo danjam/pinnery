@@ -17,19 +17,15 @@ const PASSWORD = process.env.PINNERY_PASSWORD;
 const ADMIN_EMAIL = process.env.PINNERY_ADMIN_EMAIL;
 // Base URL of emailed links (e.g. https://pinnery.example.com); without it, the request's own origin.
 const PUBLIC_URL = process.env.PINNERY_PUBLIC_URL || '';
-// Express "trust proxy": whose X-Forwarded-For/-Proto to believe for the client's IP (throttles) and
-// HTTPS (Secure cookie, link scheme). Default 1: the reverse proxy in front. 'false' when there's
-// none, or else anyone can claim any IP. Also takes a hop count or proxy IPs/CIDRs. Not 'true':
-// Express would then trust every hop and take the client's own leftmost X-Forwarded-For.
-const TRUST_PROXY = (() => {
-  const v = (process.env.PINNERY_TRUST_PROXY || '1').trim();
-  if (v === 'true') {
-    console.error('PINNERY_TRUST_PROXY=true would let any client fake its IP; use 1 (one proxy) or your proxy\'s address — refusing to start');
-    process.exit(1);
-  }
-  if (v === 'false') return false;
-  return /^\d+$/.test(v) ? Number(v) : v;
-})();
+// How many reverse proxies sit in front of Pinnery (default 1). Each adds the address it saw to the
+// end of X-Forwarded-For, so the visitor's real IP is that many entries from the end; anything
+// earlier was written by the visitor. 0 when there's no proxy, or anyone can claim any IP. Passed to
+// Express as "trust proxy", which also decides when X-Forwarded-Proto counts (Secure cookie, links).
+const PROXIES = (process.env.PINNERY_PROXIES || '1').trim();
+if (!/^\d+$/.test(PROXIES)) {
+  console.error(`PINNERY_PROXIES must be the number of proxies in front of Pinnery (0 for none), not "${PROXIES}" — refusing to start`);
+  process.exit(1);
+}
 
 // Together they create the first (admin) account on first start; see auth.js.
 const missing = [['PINNERY_ADMIN_EMAIL', ADMIN_EMAIL], ['PINNERY_PASSWORD', PASSWORD]].filter(([, v]) => !v).map(([k]) => k);
@@ -73,7 +69,7 @@ function sweep() {
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', TRUST_PROXY);
+app.set('trust proxy', Number(PROXIES));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 

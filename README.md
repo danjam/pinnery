@@ -40,8 +40,9 @@ services:
       # (blocked by default).
       # PINNERY_FETCH_ALLOW: 192.168.1.0/24
 
-      # Only if there's no reverse proxy in front (see Settings).
-      # PINNERY_TRUST_PROXY: "false"
+      # How many reverse proxies sit in front of Pinnery. 1 (the default)
+      # suits one proxy such as Traefik or Caddy. Use 0 if there's none.
+      # PINNERY_PROXIES: 1
 
       TZ: Europe/London
     volumes:
@@ -60,7 +61,17 @@ The container runs as user id 1000, so create the data folder with that owner fi
 
 Pinnery is meant to sit behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). Sign-in, the phone app and the extension all expect it. Once that's set up, start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
 
-Just trying it out? `http://your-server:3420` works too. If people reach Pinnery that way for real, with no proxy in front, set `PINNERY_TRUST_PROXY: "false"`.
+Just trying it out? `http://your-server:3420` works too. If people use Pinnery that way for real, with no proxy in front, set `PINNERY_PROXIES: 0` (see below).
+
+### Proxies and sign-in limits
+
+After 10 wrong passwords from one address, Pinnery blocks that address for up to 15 minutes. Behind a proxy, every visitor seems to come from the proxy, so Pinnery reads the visitor's real address from the `X-Forwarded-For` header the proxy adds. That header is a list: anyone can put addresses at the start, and each proxy adds the address it saw to the end. `PINNERY_PROXIES` tells Pinnery how many entries from the end to read.
+
+- **One proxy (Traefik, Caddy, Nginx Proxy Manager…):** leave it at the default, `1`.
+- **Two proxies (e.g. Cloudflare, then Traefik):** `2`.
+- **No proxy:** `0`. If you leave it at `1` with no proxy, anyone can claim any address and get round the limit.
+
+Pinnery also uses the proxy's `X-Forwarded-Proto` header to tell when visitors are on HTTPS, so it can mark the sign-in cookie secure.
 
 ## Settings
 
@@ -75,7 +86,7 @@ Just trying it out? `http://your-server:3420` works too. If people reach Pinnery
 | `PINNERY_SMTP_USER`, `PINNERY_SMTP_PASSWORD` | | Your mail login, if it needs one. |
 | `PINNERY_SMTP_FROM` | for email | The sender, e.g. `Pinnery <pinnery@example.com>`. |
 | `PINNERY_FETCH_ALLOW` | | Lets Pinnery save images from addresses on your own network (blocked by default), e.g. `192.168.1.0/24`. |
-| `PINNERY_TRUST_PROXY` | | Default `1`: trust the reverse proxy in front for each visitor's IP and whether they're on HTTPS. Set to `false` when there's no proxy, or anyone can fake their IP to get round the sign-in limits. Also takes a number of proxies or their addresses, e.g. `172.18.0.0/16`. |
+| `PINNERY_PROXIES` | | How many reverse proxies sit in front of Pinnery. Default `1`. Set `0` if there's none. See [Proxies and sign-in limits](#proxies-and-sign-in-limits). |
 | `TZ` | | Your time zone. |
 
 Email is optional. Without it, everything still works: invite and password-reset links are shown on screen for you to pass on yourself.
