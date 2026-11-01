@@ -1,4 +1,12 @@
+<img src="src/public/icon.svg" alt="" width="72" align="right">
+
 # Pinnery
+
+[![Tests](https://github.com/danjam/pinnery/actions/workflows/test.yml/badge.svg?branch=master)](https://github.com/danjam/pinnery/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/danjam/pinnery)](https://github.com/danjam/pinnery/releases/latest)
+[![Licence: MIT](https://img.shields.io/github/license/danjam/pinnery)](LICENSE)
+[![Node 24+](https://img.shields.io/badge/node-24%2B-339933)](package.json)
+[![Image: ghcr.io/danjam/pinnery](https://img.shields.io/badge/image-ghcr.io%2Fdanjam%2Fpinnery-2496ED)](https://github.com/danjam/pinnery/pkgs/container/pinnery)
 
 Your own private Pinterest. Save images from anywhere into boards, browse them in a tidy grid, and share boards with the people you choose. It runs on your own server, so your pins stay yours.
 
