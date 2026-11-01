@@ -2,6 +2,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer } from '../helpers/server.ts';
@@ -142,6 +143,33 @@ describe('export and import', () => {
     assert.deepEqual((await u.get('/api/boards')).body, [], 'a failed import leaves no empty boards');
     // the server is still fine
     assert.equal((await u.get('/api/me')).status, 200);
+  });
+
+  it('runs one import at a time', async () => {
+    const u = await server.createUser('grace@example.com', 'grace-password-1');
+    const zip = await makeZip([['pins.json', manifest([])]]);
+    // Hold an import open mid-upload: send the headers and part of the zip, then wait.
+    const req = http.request(new URL('/api/import', server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'content-length': zip.length, cookie: u.cookie()!, 'sec-fetch-site': 'same-origin' },
+    });
+    const first = new Promise<number>((resolve, reject) => {
+      req.on('response', (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on('error', reject);
+    });
+    req.write(zip.subarray(0, 10));
+    // It holds the lock once its upload is being spooled to a temp file.
+    const tmp = path.join(server.dataDir, 'tmp');
+    const spooling = () => fs.existsSync(tmp) && fs.readdirSync(tmp).some((f) => f.startsWith('import-'));
+    for (let i = 0; i < 250 && !spooling(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(spooling(), 'the first import is being received');
+    const second = await importZip(u, zip);
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already running/);
+    req.end(zip.subarray(10));
+    assert.equal(await first, 200);
+    // and the next one goes through
+    assert.equal((await importZip(u, zip)).status, 200);
   });
 
   it('a good zip with a valid manifest imports', async () => {
