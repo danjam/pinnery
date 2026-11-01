@@ -42,12 +42,17 @@ function parseCookies(header) {
 
 // A same-origin path for the login page's `next` parameter, or null (home page). Resolved the way a
 // browser would, then checked to stay on our origin: a pattern check alone misses tricks like
-// "/\t/evil.com", which browsers read as //evil.com. Returns the normalised path.
+// "/\t/evil.com", which browsers read as //evil.com. Returns the normalised path, refusing one that
+// starts with // (from "/..//evil.com"): that would be read as another host when used again.
+// Unparseable values (e.g. "//[") are refused too. Mirrored in public/js/next.js.
 export function safeNext(v) {
   if (typeof v !== 'string' || !v.startsWith('/') || v.length > 2048) return null;
   const base = 'http://pinnery.invalid';
-  const u = new URL(v, base);
-  return u.origin === base ? u.pathname + u.search + u.hash : null;
+  let u;
+  try { u = new URL(v, base); } catch { return null; }
+  if (u.origin !== base) return null;
+  const path = u.pathname + u.search + u.hash;
+  return path.startsWith('//') ? null : path;
 }
 
 // Validate the connect request parameters (query on GET /connect, JSON body on the decision POST).
