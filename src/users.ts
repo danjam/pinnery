@@ -15,10 +15,11 @@ const toId = (v: unknown) => {
 // or deleting ends the user's sessions and revokes their tokens on the spot.
 export interface UserRoutesDeps {
   auth: Auth;
-  deletePinRows: (ids: number[]) => number;
+  deletePinRows: (ids: number[]) => { changes: number; shas: string[] };
+  removeUnused: (shas: Iterable<string>) => void;
 }
 
-export function createUserRoutes(db: Db, { auth, deletePinRows }: UserRoutesDeps) {
+export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: UserRoutesDeps) {
   const r = express.Router();
 
   const listUsers = db.prepare<[], Pick<UserRow, 'id' | 'email' | 'display_name' | 'is_admin' | 'created_at'> & { last_seen_at: string | null; boards: number; pins: number }>(`
@@ -54,23 +55,26 @@ export function createUserRoutes(db: Db, { auth, deletePinRows }: UserRoutesDeps
     res.json(userJson(setAdmin(toId(req.params.id), req.body.is_admin)));
   });
 
-  // Pins first (through the refcount, so a file another user's pin shares stays), then boards, then
-  // the user — whose sessions, tokens and emailed links (including invites they sent) cascade.
+  // Pins first, then boards, then the user — whose sessions, tokens and emailed links (including
+  // invites they sent) cascade. Returns the pins' hashes: their files go after the commit, through
+  // the refcount, so a file another user's pin shares stays.
   const deleteUser = db.transaction((id: number | null, callerId: number) => {
     const user = findUser(id);
     if (user.id === callerId) throw new ImageError(409, 'You can’t delete yourself — ask another admin.');
     if (lastAdmin(user)) throw new ImageError(409, 'The last admin can’t be deleted.');
     const boardPins = db.prepare<[number], { id: number }>('SELECT id FROM pins WHERE board_id = ?');
     const deleteBoard = db.prepare<[number]>('DELETE FROM boards WHERE id = ?');
+    const shas: string[] = [];
     for (const { id: boardId } of db.prepare<[number], { id: number }>('SELECT id FROM boards WHERE owner_id = ?').all(user.id)) {
-      deletePinRows(boardPins.all(boardId).map((p) => p.id));
+      shas.push(...deletePinRows(boardPins.all(boardId).map((p) => p.id)).shas);
       deleteBoard.run(boardId);
     }
     db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    return shas;
   });
 
   r.delete('/:id', (req, res) => {
-    deleteUser(toId(req.params.id), req.user.id);
+    removeUnused(deleteUser(toId(req.params.id), req.user.id));
     res.json({ ok: true });
   });
 

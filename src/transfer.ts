@@ -48,6 +48,7 @@ export interface TransferDeps {
   access: Access;
   cleanName: (v: unknown) => string;
   cleanText: (v: unknown, max: number) => string | null;
+  storePin: <T extends { id: number }>(buf: Buffer, info: Fingerprint, insertRow: () => T) => Promise<T>;
 }
 
 type BoardStub = Pick<BoardRow, 'id' | 'name' | 'cover_pin_id'>;
@@ -70,7 +71,7 @@ interface ImportBoard {
   pins: ImportPin[];
 }
 
-export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText }: TransferDeps) {
+export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, storePin }: TransferDeps) {
   const r = express.Router();
 
   const allBoards = db.prepare<{ user: number }, BoardStub>(`SELECT b.id, b.name, b.cover_pin_id FROM boards b WHERE ${access.OWNS} ORDER BY b.name COLLATE NOCASE, b.id`);
@@ -267,8 +268,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
               throw e;
             }
             if (hasSha.get(row.id, info.sha256)) { summary.pins_skipped++; continue; }
-            await store.save(buf, info);
-            insertPin.run({ board_id: row.id, ...info, source_url: pin.source_url, page_title: pin.page_title, created_at: pin.created_at ?? new Date().toISOString() });
+            await storePin(buf, info, () => ({ id: Number(insertPin.run({ board_id: row.id, ...info, source_url: pin.source_url, page_title: pin.page_title, created_at: pin.created_at ?? new Date().toISOString() }).lastInsertRowid) }));
             summary.pins_added++;
           }
           if (board.cover_sha256 && row.cover_pin_id == null) {
