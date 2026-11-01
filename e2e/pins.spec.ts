@@ -79,3 +79,21 @@ test('deletes a pin from the lightbox', async ({ page, user }) => {
   const { body } = await user.client.get(`/api/boards/${board.id}/pins`);
   expect(body.pins).toEqual([]);
 });
+
+test('the lightbox only links http(s) sources', async ({ page, user }) => {
+  const board = await newBoard(user.client, 'Legacy');
+  await upload(user.client, board.id, await pngBuffer({ color: '#00ffff' }), '&name=Old%20pin');
+  // A value saved before source URLs were checked.
+  await page.route(`**/api/boards/${board.id}/pins*`, async (route) => {
+    const res = await route.fetch();
+    const json = await res.json();
+    json.pins[0].source_url = 'javascript:alert(1)';
+    await route.fulfill({ response: res, json });
+  });
+  await page.goto(`/b/${board.id}`);
+
+  await page.locator('.tile').first().click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Old pin')).toBeVisible();
+  await expect(dialog.locator('a[href^="javascript:"]')).toHaveCount(0);
+});

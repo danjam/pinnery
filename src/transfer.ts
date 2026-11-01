@@ -48,6 +48,7 @@ export interface TransferDeps {
   access: Access;
   cleanName: (v: unknown) => string;
   cleanText: (v: unknown, max: number) => string | null;
+  cleanUrl: (v: unknown) => string | null;
 }
 
 type BoardStub = Pick<BoardRow, 'id' | 'name' | 'cover_pin_id'>;
@@ -70,7 +71,7 @@ interface ImportBoard {
   pins: ImportPin[];
 }
 
-export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText }: TransferDeps) {
+export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, cleanUrl }: TransferDeps) {
   const r = express.Router();
 
   const allBoards = db.prepare<{ user: number }, BoardStub>(`SELECT b.id, b.name, b.cover_pin_id FROM boards b WHERE ${access.OWNS} ORDER BY b.name COLLATE NOCASE, b.id`);
@@ -218,7 +219,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
         const created = typeof pin.created_at === 'string' ? new Date(pin.created_at) : null;
         return {
           entry,
-          source_url: cleanText(pin.source_url, 2048),
+          source_url: cleanUrl(pin.source_url),
           page_title: cleanText(pin.page_title, 500),
           created_at: created && !Number.isNaN(created.getTime()) ? created.toISOString() : null,
         };

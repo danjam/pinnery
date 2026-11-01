@@ -58,10 +58,13 @@ export function openLightbox({ pins, index, actions = {} }: {
     fullSize.href = originalUrl(pin);
     counter.textContent = `${i + 1} / ${pins.length}`;
     info.replaceChildren();
-    let host = '';
-    try { host = pin.source_url ? new URL(pin.source_url).hostname.replace(/^www\./, '') : ''; } catch {}
+    // Only an http(s) source becomes a link; anything else (say, an old javascript: value) doesn't.
+    let source: URL | null = null;
+    try { source = pin.source_url ? new URL(pin.source_url) : null; } catch {}
+    const link = source && (source.protocol === 'http:' || source.protocol === 'https:') ? source : null;
+    const host = link ? link.hostname.replace(/^www\./, '') : '';
     const label = pin.page_title || host || 'Uploaded';
-    info.append(pin.source_url
+    info.append(link && pin.source_url
       ? el('a', { href: pin.source_url, target: '_blank', rel: 'noopener noreferrer', title: pin.source_url }, icon('open-in-new'), el('span', { text: label }))
       : el('span', { text: label }));
     info.append(el('span', { text: `· ${pin.width}×${pin.height}${pin.animated ? ' · animated' : ''}` }));
