@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
 import { openDb } from './db.ts';
 import { createAuth, safeNext, parseConnectParams } from './auth.ts';
@@ -88,6 +89,17 @@ app.use((req, res, next) => {
   res.set({ 'Content-Security-Policy': CSP, 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' });
   next();
 });
+
+// A cap on requests per client IP (the same one the sign-in throttle sees, via "trust proxy"), so a
+// script can't flood the server. Far above real use: the busiest is a first scroll through a big
+// board, one request per thumbnail. Past it, 429 until the minute is up.
+app.use(rateLimit({
+  windowMs: 60 * 1000,
+  limit: 1000,
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'too many requests, try again shortly' },
+}));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
