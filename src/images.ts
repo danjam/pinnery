@@ -59,8 +59,10 @@ export function createStore(dataDir: string) {
     } catch {
       throw new ImageError(415, 'not a supported image');
     }
-    const mime = MIMES[meta.format];
-    if (!mime || !meta.width || !meta.height) throw new ImageError(415, `unsupported image format${meta.format ? `: ${meta.format}` : ''}`);
+    // sharp reports AVIF as HEIF with AV1 compression; other HEIF (HEIC, i.e. HEVC) stays unsupported.
+    const format = meta.format === 'heif' && meta.compression === 'av1' ? 'avif' : meta.format;
+    const mime = MIMES[format];
+    if (!mime || !meta.width || !meta.height) throw new ImageError(415, `unsupported image format${format ? `: ${format}` : ''}`);
     const orientation = meta.orientation ?? 0;
     const swap = orientation >= 5 && orientation <= 8;
     return {
