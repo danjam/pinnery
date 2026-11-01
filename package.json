@@ -16,7 +16,7 @@
   "dependencies": {
     "better-sqlite3": "^13.0.3",
     "express": "^5.3.0",
-    "nodemailer": "10.1.2",
+    "nodemailer": "10.3.1",
     "request-filtering-agent": "^3.2.1",
     "sharp": "^0.35.5"
   }
