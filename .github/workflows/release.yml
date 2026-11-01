@@ -6,7 +6,7 @@ name: Release
 # with GITHUB_TOKEN wouldn't trigger a separate tag workflow).
 #
 # Only the app is released. The extension ships inside the image; it learns about newer builds by
-# fingerprint (see EXTENSION_FINGERPRINT in src/server.js), not by version number.
+# fingerprint (see EXTENSION_FINGERPRINT in src/server.ts), not by version number.
 
 on:
   push:

@@ -1,0 +1,30 @@
+// Script for password.html (kept out of the page so the CSP can forbid inline scripts).
+
+import { nextPath } from './next.ts';
+// The page's HTML has these elements.
+const form = document.getElementById('change') as HTMLFormElement & {
+  current: HTMLInputElement;
+  next: HTMLInputElement;
+  again: HTMLInputElement;
+};
+const error = document.getElementById('error')!;
+const fail = (msg: string) => { error.textContent = msg; error.hidden = false; };
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  error.hidden = true;
+  if (form.next.value !== form.again.value) { fail('The new passwords don\u2019t match'); form.again.select(); return; }
+  const res = await fetch('/api/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current: form.current.value, new: form.next.value }),
+  });
+  if (res.ok) {
+    // Back to where the gate caught us (same-origin only), else home.
+    location.replace(nextPath());
+    return;
+  }
+  if (res.status === 401) { location.replace(`/login?next=${encodeURIComponent(location.pathname + location.search)}`); return; }
+  const body: { error?: string } = await res.json().catch(() => ({}));
+  fail(body.error || `Couldn\u2019t change the password (${res.status})`);
+  form.current.select();
+});
