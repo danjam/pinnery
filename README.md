@@ -65,9 +65,13 @@ services:
 
 The container runs as user id 1000, so create the data folder with that owner first: `mkdir data && sudo chown 1000:1000 data`.
 
-Pinnery is meant to sit behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). Sign-in, the mobile app and the extension all expect it. Once that's set up, start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
+Start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
 
-Just trying it out? `http://your-server:3420` works too. If people use Pinnery that way for real, with no proxy in front, set `PINNERY_PROXIES: 0` (see [Proxies and sign-in limits](docs/proxies.md)).
+### HTTPS
+
+Pinnery works over plain http, so `http://your-server:3420` is fine for trying it out. For everyday use, put it behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). A few things only work over HTTPS: installing Pinnery on mobile, sharing images to it, and the Copy and Share buttons for links.
+
+With no proxy in front, set `PINNERY_PROXIES: 0` (see [Proxies and sign-in limits](docs/proxies.md)).
 
 ## Documentation
 
