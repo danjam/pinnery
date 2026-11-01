@@ -121,7 +121,7 @@ interface SrcsetEntry {
     }
   }
 
-  // The toast mirrors the app's (src/public/js/ui.js toast + .toast styles): same markup, colours,
+  // The toast mirrors the app's (src/public/js/ui.ts toast + .toast styles): same markup, colours,
   // countdown bar and hover-pause. It lives in a closed shadow root so page CSS can't touch it. The
   // host passes pointer events through; only the toast itself is clickable.
   const TOAST_CSS = `
@@ -157,7 +157,7 @@ interface SrcsetEntry {
     const bar = document.createElement('span');
     bar.className = 'bar';
     if (!ok) {
-      // Same alert-outline path as the app's icons.js (MDI, Apache-2.0).
+      // Same alert-outline path as the app's icons.ts (MDI, Apache-2.0).
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', '0 0 24 24');
       svg.setAttribute('aria-hidden', 'true');

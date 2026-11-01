@@ -1,4 +1,4 @@
-// Service worker: owns the context menu, runs the fetch chain (lib/pin.js) to hand the image to
+// Service worker: owns the context menu, runs the fetch chain (lib/pin.ts) to hand the image to
 // the server, then opens the server's board picker (/pick/<token>) in a popup window. The picker
 // is a normal web page, so picker changes ship with the server and never need a reinstall. The
 // page reports the outcome by navigating to /pick/<token>/done or /cancelled; we watch the popup's
