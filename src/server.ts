@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import compression from 'compression';
 import express from 'express';
 import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
@@ -134,6 +135,10 @@ app.use((req, res, next) => {
   if (!sessionCookieRe.test(req.get('cookie') || '')) return next();
   refuseCrossSite(req, res, next);
 });
+
+// Compress text responses (brotli, else gzip) so it doesn't depend on the proxy. The default filter
+// only compresses compressible types, so images, thumbnails and zips go out as they are.
+app.use(compression());
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
