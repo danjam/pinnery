@@ -202,7 +202,10 @@ export function openZipFile(file: string, { maxEntrySize = Infinity }: { maxEntr
     }
 
     function read(entry: ZipEntry): Buffer {
-      if (entry.size > maxEntrySize) throw new ZipError(`${entry.name}: too large`);
+      // Deflate can grow incompressible data slightly, so the compressed cap allows a margin.
+      if (entry.size > maxEntrySize || entry.compressedSize > maxEntrySize + Math.ceil(maxEntrySize / 1024) + 64) {
+        throw new ZipError(`${entry.name}: too large`);
+      }
       const local = readAt(entry.offset, 30);
       if (local.readUInt32LE(0) !== SIG_LOCAL) throw new ZipError('not a valid zip file');
       const dataStart = entry.offset + 30 + local.readUInt16LE(26) + local.readUInt16LE(28);
