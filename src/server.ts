@@ -83,6 +83,8 @@ app.set('trust proxy', Number(PROXIES));
 // injected <script> can't run), images from us or data: URLs (the accent favicon), and no framing
 // (clickjacking). Inline styles stay allowed: the UI sets style attributes, and CSS can't run code.
 // Routes that need something stricter (images, see routes.ts) set their own CSP over this one.
+// Referrer-Policy: same-origin, so no request leaving the site carries the install's address;
+// emailed-link and pick pages set no-referrer over it, as their URLs carry tokens.
 const CSP = [
   "default-src 'self'",
   "script-src 'self'",
@@ -94,7 +96,7 @@ const CSP = [
   "frame-ancestors 'none'",
 ].join('; ');
 app.use((req, res, next) => {
-  res.set({ 'Content-Security-Policy': CSP, 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff' });
+  res.set({ 'Content-Security-Policy': CSP, 'X-Frame-Options': 'DENY', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'same-origin' });
   next();
 });
 

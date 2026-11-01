@@ -21,6 +21,7 @@ describe('security headers', () => {
       assert.match(csp ?? '', /frame-ancestors 'none'/);
       assert.equal(res.headers.get('x-frame-options'), 'DENY');
       assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+      assert.equal(res.headers.get('referrer-policy'), p === '/forgot' ? 'no-referrer' : 'same-origin');
     });
   }
 
