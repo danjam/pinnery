@@ -40,6 +40,9 @@ services:
       # (blocked by default).
       # PINNERY_FETCH_ALLOW: 192.168.1.0/24
 
+      # Only if there's no reverse proxy in front (see Settings).
+      # PINNERY_TRUST_PROXY: "false"
+
       TZ: Europe/London
     volumes:
       - ./data:/data                     # your images and database
@@ -57,7 +60,7 @@ The container runs as user id 1000, so create the data folder with that owner fi
 
 Pinnery is meant to sit behind a reverse proxy with HTTPS (Caddy, Traefik, Nginx Proxy Manager…). Sign-in, the phone app and the extension all expect it. Once that's set up, start Pinnery with `docker compose up -d`, open your Pinnery address, and sign in with that email and password. You'll be asked to choose a new password straight away. The one in the file is only used to get you in the first time.
 
-Just trying it out? `http://your-server:3420` works too.
+Just trying it out? `http://your-server:3420` works too. If people reach Pinnery that way for real, with no proxy in front, set `PINNERY_TRUST_PROXY: "false"`.
 
 ## Settings
 
@@ -72,6 +75,7 @@ Just trying it out? `http://your-server:3420` works too.
 | `PINNERY_SMTP_USER`, `PINNERY_SMTP_PASSWORD` | | Your mail login, if it needs one. |
 | `PINNERY_SMTP_FROM` | for email | The sender, e.g. `Pinnery <pinnery@example.com>`. |
 | `PINNERY_FETCH_ALLOW` | | Lets Pinnery save images from addresses on your own network (blocked by default), e.g. `192.168.1.0/24`. |
+| `PINNERY_TRUST_PROXY` | | Default `1`: trust the reverse proxy in front for each visitor's IP and whether they're on HTTPS. Set to `false` when there's no proxy, or anyone can fake their IP to get round the sign-in limits. Also takes a number of proxies or their addresses, e.g. `172.18.0.0/16`. |
 | `TZ` | | Your time zone. |
 
 Email is optional. Without it, everything still works: invite and password-reset links are shown on screen for you to pass on yourself.

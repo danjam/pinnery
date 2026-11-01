@@ -70,7 +70,7 @@ export function parseConnectParams(src) {
 }
 
 // The base of links we hand out: PINNERY_PUBLIC_URL when set, else our own origin as the browser
-// sees it (trust proxy is on, so X-Forwarded-Proto counts). No trailing slash.
+// sees it (X-Forwarded-Proto counts from a trusted proxy, see PINNERY_TRUST_PROXY). No trailing slash.
 export const linkBase = (req, publicUrl = '') => (publicUrl || `${req.protocol}://${req.get('host')}`).replace(/\/+$/, '');
 
 // mailer: see mail.js (may be disabled). publicUrl: PINNERY_PUBLIC_URL, the base of emailed links;

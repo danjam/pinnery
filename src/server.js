@@ -17,6 +17,14 @@ const PASSWORD = process.env.PINNERY_PASSWORD;
 const ADMIN_EMAIL = process.env.PINNERY_ADMIN_EMAIL;
 // Base URL of emailed links (e.g. https://pinnery.example.com); without it, the request's own origin.
 const PUBLIC_URL = process.env.PINNERY_PUBLIC_URL || '';
+// Express "trust proxy": whose X-Forwarded-For/-Proto to believe for the client's IP (throttles) and
+// HTTPS (Secure cookie, link scheme). Default 1: the reverse proxy in front. 'false' when there's
+// none, or else anyone can claim any IP. Also takes a hop count or proxy IPs/CIDRs.
+const TRUST_PROXY = (() => {
+  const v = (process.env.PINNERY_TRUST_PROXY || '1').trim();
+  if (v === 'true' || v === 'false') return v === 'true';
+  return /^\d+$/.test(v) ? Number(v) : v;
+})();
 
 // Together they create the first (admin) account on first start; see auth.js.
 const missing = [['PINNERY_ADMIN_EMAIL', ADMIN_EMAIL], ['PINNERY_PASSWORD', PASSWORD]].filter(([, v]) => !v).map(([k]) => k);
@@ -60,7 +68,7 @@ function sweep() {
 
 const app = express();
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+app.set('trust proxy', TRUST_PROXY);
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
