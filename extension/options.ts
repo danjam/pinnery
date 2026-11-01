@@ -1,11 +1,19 @@
-import { api, getConfig, setConfig, clearConfig, normaliseServer, isInsecure } from './lib/api.js';
-import { icon } from './lib/icons.js';
+import { api, getConfig, setConfig, clearConfig, normaliseServer, isInsecure, ApiError } from './lib/api.ts';
+import type { Config } from './lib/api.ts';
+import { icon } from './lib/icons.ts';
 
-const $ = (id) => document.getElementById(id);
-const form = $('connect');
+// options.html defines every id used here, so lookups are asserted rather than null-checked.
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const form = $<HTMLFormElement>('connect');
+
+// Not in lib.dom yet: Chromium's client hints, and Brave's marker.
+type BrowserNavigator = Navigator & {
+  userAgentData?: { platform?: string; brands?: { brand: string }[] };
+  brave?: unknown;
+};
 
 // The test result pill under the buttons: kind is 'ok' | 'error' | 'pending', or nothing to hide it.
-function setCheck(kind, text) {
+function setCheck(kind: 'ok' | 'error' | 'pending' | null, text = '') {
   const out = $('check');
   out.classList.toggle('hidden', !kind);
   out.className = `pill${kind === 'error' ? ' error' : kind === 'pending' ? ' pending' : ''}${kind ? '' : ' hidden'}`;
@@ -17,7 +25,7 @@ function setCheck(kind, text) {
 
 // Plain http is allowed but flagged, while typing the address and once connected.
 const INSECURE = 'Unencrypted connection: your sign-in and this browser\'s token can be read by others on this network. Use https if you can.';
-function setWarn(id, server) {
+function setWarn(id: string, server: string | null) {
   const out = $(id);
   const show = isInsecure(server);
   out.classList.toggle('hidden', !show);
@@ -26,11 +34,12 @@ function setWarn(id, server) {
 }
 
 function defaultName() {
-  const platform = navigator.userAgentData?.platform || navigator.platform || '';
+  const nav: BrowserNavigator = navigator;
+  const platform = nav.userAgentData?.platform || nav.platform || '';
   const os = /mac/i.test(platform) ? 'Mac' : /win/i.test(platform) ? 'Windows' : /linux/i.test(platform) ? 'Linux' : /cros/i.test(platform) ? 'ChromeOS' : platform;
   // Brave hides itself from the brand list; Edge/Opera/Vivaldi report their own brand.
-  const brands = (navigator.userAgentData?.brands || []).map((b) => b.brand);
-  const browser = navigator.brave ? 'Brave'
+  const brands = (nav.userAgentData?.brands || []).map((b) => b.brand);
+  const browser = nav.brave ? 'Brave'
     : brands.find((b) => /edge|opera|vivaldi/i.test(b))?.replace(/^Microsoft /, '') || 'Chrome';
   return os ? `${browser} on ${os}` : browser;
 }
@@ -42,7 +51,7 @@ async function show() {
   setCheck(null);
   if (cfg) {
     $('status-server').textContent = cfg.server;
-    $('status-server').href = cfg.server;
+    $<HTMLAnchorElement>('status-server').href = cfg.server;
     $('status-name').textContent = cfg.tokenName ? `as “${cfg.tokenName}”` : '';
     setWarn('status-warn', cfg.server);
     check();
@@ -53,8 +62,8 @@ async function show() {
 
 // PKCE (RFC 7636): a random verifier stays here; only its SHA-256 goes to the server with the
 // request, so a code seen in transit is useless without the verifier.
-const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-const random = (n) => b64url(crypto.getRandomValues(new Uint8Array(n)));
+const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+const random = (n: number) => b64url(crypto.getRandomValues(new Uint8Array(n)));
 async function pkce() {
   const verifier = random(32);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier));
@@ -64,7 +73,7 @@ async function pkce() {
 // Connect through the site: Chrome opens <server>/connect in an auth window, where the user signs
 // in (if needed) and approves this browser; the page then redirects to our chromiumapp.org URL
 // with a single-use code, which we trade for the token together with the PKCE verifier.
-async function connect(server, name) {
+async function connect(server: string, name: string) {
   const redirectUri = chrome.identity.getRedirectURL();
   const { verifier, challenge } = await pkce();
   const state = random(16);
@@ -76,13 +85,14 @@ async function connect(server, name) {
     state,
     name,
   }).toString();
-  let result;
+  let result: string | undefined;
   try {
     result = await chrome.identity.launchWebAuthFlow({ url: url.href, interactive: true });
   } catch (e) {
-    throw new Error(/did not approve|canceled|cancelled|closed/i.test(e.message) ? 'Connection cancelled' : `Couldn't open the connect page: ${e.message}`);
+    const msg = (e as Error).message;
+    throw new Error(/did not approve|canceled|cancelled|closed/i.test(msg) ? 'Connection cancelled' : `Couldn't open the connect page: ${msg}`);
   }
-  const back = new URL(result);
+  const back = new URL(result!); // only undefined for non-interactive flows
   if (back.searchParams.get('state') !== state) throw new Error('Connection failed: the server replied to a different request');
   if (back.searchParams.get('error')) throw new Error('Connection cancelled');
   const code = back.searchParams.get('code');
@@ -90,24 +100,24 @@ async function connect(server, name) {
   return api.exchangeCode(server, { code, code_verifier: verifier, redirect_uri: redirectUri });
 }
 
-$('name').value = defaultName();
-$('server').addEventListener('input', () => setWarn('connect-warn', normaliseServer($('server').value)));
+$<HTMLInputElement>('name').value = defaultName();
+$<HTMLInputElement>('server').addEventListener('input', () => setWarn('connect-warn', normaliseServer($<HTMLInputElement>('server').value)));
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const err = $('connect-error');
   err.textContent = '';
-  const server = normaliseServer($('server').value);
+  const server = normaliseServer($<HTMLInputElement>('server').value);
   if (!server) { err.textContent = 'Enter the server address, e.g. https://pinnery.example.com'; return; }
-  $('connect-btn').disabled = true;
+  $<HTMLButtonElement>('connect-btn').disabled = true;
   try {
-    const t = await connect(server, $('name').value.trim() || defaultName());
+    const t = await connect(server, $<HTMLInputElement>('name').value.trim() || defaultName());
     await setConfig({ server, token: t.token, tokenId: t.id, tokenName: t.name });
     await show();
   } catch (e2) {
-    err.textContent = e2.message;
+    err.textContent = (e2 as Error).message;
   } finally {
-    $('connect-btn').disabled = false;
+    $<HTMLButtonElement>('connect-btn').disabled = false;
   }
 });
 
@@ -129,12 +139,12 @@ async function check() {
     checkUpdate(cfg);
   } catch (e) {
     dot.className = 'dot bad';
-    if (e.kind === 'unauthorised') {
+    if (e instanceof ApiError && e.kind === 'unauthorised') {
       title.textContent = 'Not connected';
       setCheck('error', 'This browser\u2019s token was revoked or no longer works. Disconnect, then connect again.');
     } else {
       title.textContent = 'Can\u2019t reach the server';
-      setCheck('error', e.message);
+      setCheck('error', (e as Error).message);
     }
   }
 }
@@ -144,11 +154,11 @@ $('test').onclick = check;
 // The server ships its build of the extension (Settings → Devices) and reports a fingerprint of it.
 // The zip it serves carries the same fingerprint in manifest.json's version_name ("<version>+<fp>"),
 // so a mismatch means the server has a different build than the one installed here.
-async function checkUpdate(cfg) {
+async function checkUpdate(cfg: Config) {
   const box = $('update');
   box.classList.add('hidden');
   try {
-    const { extension_fingerprint: latest } = await fetch(`${cfg.server}/healthz`).then((r) => r.json());
+    const { extension_fingerprint: latest }: { extension_fingerprint?: string } = await fetch(`${cfg.server}/healthz`).then((r) => r.json());
     const mine = (chrome.runtime.getManifest().version_name || '').split('+')[1] || '';
     if (!latest || latest === mine) return;
     const link = document.createElement('a');
@@ -164,10 +174,10 @@ async function checkUpdate(cfg) {
 // token already revoked), then forget it locally either way.
 $('disconnect').onclick = async () => {
   const cfg = await getConfig();
-  $('disconnect').disabled = true;
+  $<HTMLButtonElement>('disconnect').disabled = true;
   if (cfg?.tokenId) await api.revokeToken(cfg, cfg.tokenId).catch(() => {});
   await clearConfig();
-  $('disconnect').disabled = false;
+  $<HTMLButtonElement>('disconnect').disabled = false;
   await show();
 };
 

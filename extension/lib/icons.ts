@@ -9,7 +9,9 @@ export const paths = {
 };
 
 // An inline <svg> for the named icon. Sized by CSS (.icon); decorative unless a label is given.
-export function icon(name, { label } = {}) {
+export type IconName = keyof typeof paths;
+
+export function icon(name: IconName, { label }: { label?: string } = {}): SVGSVGElement {
   const d = paths[name];
   if (!d) throw new Error(`unknown icon: ${name}`);
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');

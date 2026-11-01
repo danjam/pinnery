@@ -2,18 +2,32 @@
 // largest version of the image (srcset, <picture>, lazy-load attributes), fetches images from inside
 // the page when the extension's own fetch is refused, and shows the "pinned" toast.
 
+import type { ContentMessage, PageFetchReply, ResolveReply } from './lib/messages.ts';
+
+declare global {
+  interface Window {
+    __pinneryContent?: boolean;
+  }
+}
+
+interface SrcsetEntry {
+  url: string;
+  w: number;
+  x: number;
+}
+
 (() => {
   if (window.__pinneryContent) return;
   window.__pinneryContent = true;
 
-  let lastTarget = null;
+  let lastTarget: EventTarget | null = null;
   addEventListener('contextmenu', (e) => { lastTarget = e.composedPath()[0] || e.target; }, true);
 
   const LAZY_ATTRS = ['data-src', 'data-original', 'data-lazy-src', 'data-full', 'data-full-src', 'data-large',
     'data-large-src', 'data-zoom-src', 'data-zoom-image', 'data-hi-res', 'data-image', 'data-url'];
   const IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif)(\?|#|$)/i;
 
-  const abs = (u) => {
+  const abs = (u: string | null | undefined): string | null => {
     if (!u || typeof u !== 'string') return null;
     u = u.trim();
     if (!u || u.startsWith('javascript:')) return null;
@@ -22,9 +36,9 @@
 
   // "url 640w, url2 1280w" or "url 1x, url2 2x" -> [{ url, w, x }]. Walks the string the way the
   // spec does, since URLs themselves may contain commas (CDN transform paths).
-  function parseSrcset(s) {
-    const out = [];
-    s = s || '';
+  function parseSrcset(input: string | null): SrcsetEntry[] {
+    const out: SrcsetEntry[] = [];
+    const s = input || '';
     let i = 0;
     while (i < s.length) {
       while (i < s.length && /[\s,]/.test(s[i])) i++;
@@ -48,18 +62,20 @@
   }
 
   // The <img> the click was on: the remembered element if it fits, else whichever image shows srcUrl.
-  function findImage(target, srcUrl) {
+  function findImage(target: EventTarget | null, srcUrl?: string): HTMLImageElement | null {
+    // The composed path's first entry isn't always an Element (document, window): hence the optional calls.
+    const node = target as Partial<Element> | null;
     const fromTarget = target instanceof HTMLImageElement ? target
-      : target?.closest?.('picture')?.querySelector('img') || target?.querySelector?.('img') || null;
+      : node?.closest?.('picture')?.querySelector('img') || node?.querySelector?.('img') || null;
     if (fromTarget && (!srcUrl || fromTarget.currentSrc === srcUrl || fromTarget.src === srcUrl)) return fromTarget;
     return [...document.images].find((i) => i.currentSrc === srcUrl || i.src === srcUrl) || fromTarget;
   }
 
   // Ordered candidate URLs, best first. Dedupes; the caller appends srcUrl as the final fallback.
-  function candidatesFor(target, srcUrl) {
+  function candidatesFor(target: EventTarget | null, srcUrl?: string): string[] {
     const img = findImage(target, srcUrl);
     if (!img) return [];
-    const entries = [];
+    const entries: SrcsetEntry[] = [];
     for (const attr of ['srcset', 'data-srcset', 'data-lazy-srcset']) entries.push(...parseSrcset(img.getAttribute(attr)));
     const picture = img.closest('picture');
     if (picture) {
@@ -67,39 +83,41 @@
         for (const attr of ['srcset', 'data-srcset']) entries.push(...parseSrcset(source.getAttribute(attr)));
       }
     }
-    let largest = null;
+    let largest: string | null = null;
     const byW = entries.filter((e) => e.w);
     const byX = entries.filter((e) => e.x);
     if (byW.length) largest = byW.reduce((a, b) => (b.w > a.w ? b : a)).url;
     else if (byX.length) largest = byX.reduce((a, b) => (b.x > a.x ? b : a)).url;
 
     const lazy = LAZY_ATTRS.map((a) => abs(img.getAttribute(a))).find((u) => u && !u.startsWith('data:'));
-    const link = img.closest('a[href]')?.href;
+    const link = img.closest<HTMLAnchorElement>('a[href]')?.href;
     const linked = link && IMAGE_EXT.test(link) ? abs(link) : null;
 
-    const list = [largest, lazy, linked, abs(img.currentSrc), abs(img.getAttribute('src'))].filter(Boolean);
+    const list = [largest, lazy, linked, abs(img.currentSrc), abs(img.getAttribute('src'))]
+      .filter((u): u is string => !!u);
     return [...new Set(list)];
   }
 
   const PAGE_FETCH_LIMIT = 30 * 1024 * 1024; // bytes; the result travels as a data: URL in a message
 
   // Fetch from inside the page: same-origin and CORS-enabled images, blob: URLs, cookie-gated files.
-  async function pageFetch(url) {
+  async function pageFetch(url: string): Promise<PageFetchReply> {
     try {
       const res = await fetch(url, { credentials: 'include', signal: AbortSignal.timeout(20000) });
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       const blob = await res.blob();
       if (!blob.size) return { ok: false, error: 'empty response' };
       if (blob.size > PAGE_FETCH_LIMIT) return { ok: false, error: 'too large to relay' };
-      const dataUrl = await new Promise((resolve, reject) => {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
-        r.onload = () => resolve(r.result);
+        r.onload = () => resolve(r.result as string); // readAsDataURL always yields a string
         r.onerror = () => reject(r.error);
         r.readAsDataURL(blob);
       });
       return { ok: true, type: blob.type, dataUrl };
     } catch (e) {
-      return { ok: false, error: e.name === 'TimeoutError' ? 'timed out' : e.message };
+      const err = e as Error; // fetch rejects with a TypeError or the timeout's DOMException
+      return { ok: false, error: err.name === 'TimeoutError' ? 'timed out' : err.message };
     }
   }
 
@@ -122,8 +140,8 @@
     @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
     @keyframes toast-bar { from { transform: scaleX(1); } to { transform: scaleX(0); } }`;
 
-  let toastHost = null;
-  function showToast(text, ok, url) {
+  let toastHost: HTMLElement | null = null;
+  function showToast(text: string, ok: boolean, url?: string | null) {
     if (!document.body) return;
     toastHost?.remove();
     const host = toastHost = document.createElement('div');
@@ -153,7 +171,7 @@
     style.textContent = TOAST_CSS;
     root.append(style, t);
 
-    let timer = null;
+    let timer: number | undefined;
     let left = ms;
     let since = 0;
     const dismiss = () => { clearTimeout(timer); host.remove(); if (toastHost === host) toastHost = null; };
@@ -168,9 +186,10 @@
     start();
   }
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  chrome.runtime.onMessage.addListener((msg: ContentMessage | null | undefined, sender, sendResponse) => {
     if (msg?.type === 'resolve') {
-      sendResponse({ candidates: candidatesFor(lastTarget, msg.srcUrl), title: document.title });
+      const reply: ResolveReply = { candidates: candidatesFor(lastTarget, msg.srcUrl), title: document.title };
+      sendResponse(reply);
     } else if (msg?.type === 'fetch') {
       pageFetch(msg.url).then(sendResponse);
       return true;
