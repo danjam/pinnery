@@ -217,10 +217,24 @@ app.use((err, req, res, next) => {
 
 sweep();
 // Express 5 hands a failed bind (e.g. the port is taken) to this callback instead of throwing.
-app.listen(PORT, '0.0.0.0', (err) => {
+const server = app.listen(PORT, '0.0.0.0', (err) => {
   if (err) {
     console.error(`can't listen on :${PORT}: ${err.message}`);
     process.exit(1);
   }
   console.log(`pinnery ${VERSION} listening on :${PORT}, data in ${DATA_DIR}`);
 });
+
+// `docker stop` sends SIGTERM, and node as PID 1 ignores it unless handled, so Docker would wait,
+// then SIGKILL mid-write. Stop taking requests, let in-flight ones finish, close the database.
+function shutdown(signal) {
+  console.log(`${signal}: shutting down`);
+  setTimeout(() => process.exit(0), 5000).unref(); // don't wait forever on a slow request
+  server.close(() => {
+    db.close();
+    process.exit(0);
+  });
+  server.closeIdleConnections();
+}
+process.once('SIGTERM', shutdown);
+process.once('SIGINT', shutdown);

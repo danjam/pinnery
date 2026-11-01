@@ -61,3 +61,29 @@ describe('PINNERY_PROXIES not a number', () => {
     assert.match(out, /PINNERY_PROXIES must be the number of proxies.*refusing to start/);
   });
 });
+
+describe('shutdown', () => {
+  it('exits cleanly on SIGTERM', { timeout: 10_000 }, async (t) => {
+    const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
+    t.after(() => fs.rm(dataDir, { recursive: true, force: true }));
+    const env = {
+      PATH: process.env.PATH,
+      DATA_DIR: dataDir,
+      PORT: '0',
+      PINNERY_ADMIN_EMAIL: 'admin@example.com',
+      PINNERY_PASSWORD: 'initial-pass-1',
+    };
+    const child = spawn(process.execPath, ['src/server.js'], { cwd: root, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    t.after(() => child.kill('SIGKILL'));
+    let out = '';
+    const listening = new Promise((resolve) => {
+      child.stdout.on('data', (d) => { out += d; if (out.includes('listening on')) resolve(); });
+    });
+    child.stderr.on('data', (d) => { out += d; });
+    const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal })));
+    await listening;
+    child.kill('SIGTERM');
+    assert.deepEqual(await exited, { code: 0, signal: null });
+    assert.match(out, /SIGTERM: shutting down/);
+  });
+});
