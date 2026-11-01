@@ -12,8 +12,9 @@ test('shares a board as viewer, then editor', async ({ page, user, server, brows
   await page.locator('.board-tile', { hasText: 'Shared' }).getByRole('button', { name: 'Board menu' }).click();
   await page.getByRole('menu').getByRole('button', { name: 'Share…' }).click();
   const share = page.getByRole('dialog');
-  await share.getByPlaceholder('Find someone by name or email').fill('Bob');
-  await share.locator('.token', { hasText: bob.email }).getByRole('button', { name: 'Viewer' }).click();
+  await share.getByPlaceholder('Find someone by name').fill('Bob');
+  // The picker masks other people's emails for non-admins.
+  await share.locator('.token', { hasText: 'Bob · b***@example.com' }).getByRole('button', { name: 'Viewer' }).click();
   await expect(share.getByRole('combobox', { name: 'Role for Bob' })).toHaveValue('viewer');
 
   // Bob sees it, can open the pin, but can't add, select or delete.

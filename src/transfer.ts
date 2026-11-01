@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import express from 'express';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import type { Access } from './access.ts';
 import type { BoardRow, Db, PinRow } from './db.ts';
 import { errorMessage } from './errors.ts';
@@ -19,8 +19,8 @@ import type { ZipEntry, ZipFile } from './zip.ts';
 // Boards are matched by name on import, so the folder names are only for people browsing the zip.
 
 const FORMAT_VERSION = 1;
-// The archive is spooled to disk, not memory; without zip64 the format itself tops out at 4 GiB.
-const IMPORT_MAX_BYTES = 4 * 1024 ** 3 - 1;
+// The archive is spooled to disk, not memory. Exports past 4 GiB are zip64, so imports go beyond it too.
+const IMPORT_MAX_BYTES = 16 * 1024 ** 3;
 const MANIFEST_MAX_BYTES = 32 * 1024 * 1024;
 
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'image/avif': 'avif' };
@@ -48,6 +48,7 @@ export interface TransferDeps {
   access: Access;
   cleanName: (v: unknown) => string;
   cleanText: (v: unknown, max: number) => string | null;
+  cleanUrl: (v: unknown) => string | null;
   storePin: <T extends { id: number }>(buf: Buffer, info: Fingerprint, insertRow: () => T) => Promise<T>;
 }
 
@@ -71,7 +72,7 @@ interface ImportBoard {
   pins: ImportPin[];
 }
 
-export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, storePin }: TransferDeps) {
+export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin }: TransferDeps) {
   const r = express.Router();
 
   const allBoards = db.prepare<{ user: number }, BoardStub>(`SELECT b.id, b.name, b.cover_pin_id FROM boards b WHERE ${access.OWNS} ORDER BY b.name COLLATE NOCASE, b.id`);
@@ -219,7 +220,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
         const created = typeof pin.created_at === 'string' ? new Date(pin.created_at) : null;
         return {
           entry,
-          source_url: cleanText(pin.source_url, 2048),
+          source_url: cleanUrl(pin.source_url),
           page_title: cleanText(pin.page_title, 500),
           created_at: created && !Number.isNaN(created.getTime()) ? created.toISOString() : null,
         };
@@ -228,7 +229,21 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
     });
   }
 
+  // One import at a time, server-wide: each can spool up to IMPORT_MAX_BYTES to disk, so parallel
+  // ones could fill it. Others are refused while one runs.
+  let importing = false;
+
   r.post('/import', async (req, res) => {
+    if (importing) throw new ImageError(409, 'an import is already running, try again shortly');
+    importing = true;
+    try {
+      await importZip(req, res);
+    } finally {
+      importing = false;
+    }
+  });
+
+  async function importZip(req: Request, res: Response) {
     const file = await spool(req);
     let zip: ZipFile | null = null;
     try {
@@ -285,7 +300,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       zip?.close();
       fs.rmSync(file, { force: true });
     }
-  });
+  }
 
   return r;
 }

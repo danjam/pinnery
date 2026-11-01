@@ -27,6 +27,9 @@ const PIN_COLS = 'id, board_id, sha256, width, height, mime, animated, source_ur
 
 const PICK_TOKEN_RE = /^[0-9a-f]{32}$/;
 
+// Bulk delete/move: an explicit cap, well under SQLite's bound-variable limit (the ids go into IN (…)).
+const MAX_BULK_IDS = 1000;
+
 // A request under /pick/:token/…, where the token comes from the mount path.
 type PickRequest = Request<{ token: string }>;
 
@@ -139,16 +142,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     const board = id && access.ownsBoard(req.user.id, id);
     if (!board) throw notFound('board');
     const body = req.body || {};
-    if ('name' in body) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(cleanName(body.name), board.id);
+    // Check both fields before saving either, so a rejected request changes nothing.
+    const name = 'name' in body ? cleanName(body.name) : undefined;
+    let coverId: number | null | undefined;
     if ('cover_pin_id' in body) {
-      let coverId: number | null = null;
+      coverId = null;
       if (body.cover_pin_id !== null) {
         coverId = toId(body.cover_pin_id);
         const pin = coverId && getPin.get(coverId);
         if (!pin || pin.board_id !== board.id) throw bad('cover pin must belong to this board');
       }
-      db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, board.id);
     }
+    if (name !== undefined) db.prepare('UPDATE boards SET name = ? WHERE id = ?').run(name, board.id);
+    if (coverId !== undefined) db.prepare('UPDATE boards SET cover_pin_id = ? WHERE id = ?').run(coverId, board.id);
     res.json(boardJson(readBoard(req.user.id, board.id)));
   });
 
@@ -210,9 +216,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     return board;
   };
 
-  api.get('/users/directory', (req, res) => res.json(directory.all(req.user.id)));
+  // Other people's emails reach non-admins masked (d***@example.com) everywhere here (directory,
+  // share list, share reply): enough to tell apart two people with the same name, without giving
+  // out their addresses. Admins see them in full anyway (Settings → Users).
+  const maskEmail = (email: string) => {
+    const at = email.lastIndexOf('@');
+    return at > 0 ? `${email[0]}***${email.slice(at)}` : '***';
+  };
+  const emailsFor = <T extends { email: string }>(req: Request, rows: T[]): T[] =>
+    req.user.is_admin ? rows : rows.map((r) => ({ ...r, email: maskEmail(r.email) }));
 
-  api.get('/boards/:id/shares', (req, res) => res.json(listShares.all(ownedBoard(req).id)));
+  api.get('/users/directory', (req, res) => res.json(emailsFor(req, directory.all(req.user.id))));
+
+  api.get('/boards/:id/shares', (req, res) => res.json(emailsFor(req, listShares.all(ownedBoard(req).id))));
 
   // Body: { role: 'viewer' | 'editor' }. Answers with the share row; `added` says whether it's new.
   api.put('/boards/:id/shares/:userId', (req, res) => {
@@ -230,11 +246,11 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       mailer.send({ to: user.email, ...message({
         subject: `${req.user.display_name} shared “${board.name}” with you (${role === 'editor' ? 'Editor' : 'Viewer'})`,
         lines: [`Hi ${user.display_name},`,
-          `${req.user.display_name} (${req.user.email}) shared the Pinnery board “${board.name}” with you as ${role === 'editor' ? 'an editor: you can see its pins and add or delete them' : 'a viewer: you can see its pins'}.`],
+          `${req.user.display_name} shared the Pinnery board “${board.name}” with you as ${role === 'editor' ? 'an editor: you can see its pins and add or delete them' : 'a viewer: you can see its pins'}.`],
         link, linkText: 'Open the board',
       }) }).catch(() => {});
     }
-    res.json({ ...listShares.all(board.id).find((s) => s.user_id === user.id), added });
+    res.json({ ...emailsFor(req, listShares.all(board.id)).find((s) => s.user_id === user.id), added });
   });
 
   api.delete('/boards/:id/shares/:userId', (req, res) => {
@@ -254,6 +270,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (v == null || v === '') return null;
     if (typeof v !== 'string') throw bad('expected a string');
     return v.slice(0, max);
+  }
+
+  // A pin's link back to its page: kept only if it's an http(s) URL, so a javascript: or data:
+  // URL can never become a link.
+  function cleanUrl(v: unknown): string | null {
+    const s = cleanText(v, 2048);
+    if (!s) return null;
+    try {
+      const { protocol } = new URL(s);
+      return protocol === 'http:' || protocol === 'https:' ? s : null;
+    } catch {
+      return null;
+    }
   }
 
   function insert(boardId: number, info: Fingerprint, { source_url, page_title }: PinMeta): PinRow {
@@ -293,7 +322,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
     if (!access.canEditBoard(req.user.id, boardId)) throw notFound('board');
     const url = body.url.trim();
-    const pageUrl = cleanText(body.source_url, 2048);
+    const pageUrl = cleanUrl(body.source_url);
     const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
     const pin = await savePin(req.user.id, boardId, buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) });
     res.status(201).json(pin);
@@ -306,7 +335,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (!boardId) throw bad('board_id is required');
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
     const pin = await savePin(req.user.id, boardId, req.body, {
-      source_url: cleanText(queryText(req, 'source_url'), 2048),
+      source_url: cleanUrl(queryText(req, 'source_url')),
       page_title: cleanText(queryText(req, 'page_title') ?? queryText(req, 'name'), 500),
     });
     res.status(201).json(pin);
@@ -328,7 +357,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   // Raw upload: the body is the file. Query: source_url and page_title.
   api.post('/pick/upload', express.raw({ type: () => true, limit: MAX_BYTES }), async (req, res) => {
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw bad('empty upload');
-    res.status(201).json(await createPick(req.body, { source_url: cleanText(queryText(req, 'source_url'), 2048), page_title: cleanText(queryText(req, 'page_title'), 500) }, req.user.id));
+    res.status(201).json(await createPick(req.body, { source_url: cleanUrl(queryText(req, 'source_url')), page_title: cleanText(queryText(req, 'page_title'), 500) }, req.user.id));
   });
 
   // Server-side fetch. Body: { url, source_url?, page_title? }.
@@ -336,7 +365,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     const body = req.body || {};
     if (typeof body.url !== 'string' || !body.url.trim()) throw bad('url is required');
     const url = body.url.trim();
-    const pageUrl = cleanText(body.source_url, 2048);
+    const pageUrl = cleanUrl(body.source_url);
     const buf = await fetchImage(url, pageUrl && pageUrl !== url ? pageUrl : undefined);
     res.status(201).json(await createPick(buf, { source_url: pageUrl || url, page_title: cleanText(body.page_title, 500) }, req.user.id));
   });
@@ -349,6 +378,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   function idList(v: unknown): number[] {
     if (!Array.isArray(v) || !v.length) throw bad('ids must be a non-empty array');
+    if (v.length > MAX_BULK_IDS) throw bad(`at most ${MAX_BULK_IDS} pins at a time`);
     const ids: number[] = [];
     for (const id of v.map(toId)) {
       if (id === null) throw bad('invalid pin id');
@@ -413,7 +443,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
   // ---- export / import (see transfer.ts) ---------------------------------------------------
 
-  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, storePin }));
+  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin }));
 
   // deletePinRows and removeUnused are for users.ts, which deletes a user's boards inside its own transaction.
   return { api, pick: createPickRoutes(), deletePinRows, removeUnused };

@@ -12,6 +12,12 @@ export const MIMES: Record<string, string> = {
   avif: 'image/avif',
 };
 
+// Decoded size cap. A small, highly compressed file can declare a huge canvas, and decoding it
+// (to inspect or thumbnail) allocates the full bitmap; sharp's own default is ~268 MP.
+export const MAX_PIXELS = 100_000_000;
+const SHARP_OPTS = { failOn: 'none', limitInputPixels: MAX_PIXELS } as const;
+const isPixelLimit = (e: unknown) => e instanceof Error && /pixel limit/.test(e.message);
+
 // Grid thumbnails: long-side widths. Both are made at save time and regenerated on demand if missing.
 export const THUMB_SIZES = [400, 800];
 
@@ -55,12 +61,15 @@ export function createStore(dataDir: string) {
   async function inspect(buf: Buffer): Promise<ImageInfo> {
     let meta;
     try {
-      meta = await sharp(buf, { failOn: 'none' }).metadata();
-    } catch {
+      meta = await sharp(buf, SHARP_OPTS).metadata();
+    } catch (e) {
+      if (isPixelLimit(e)) throw new ImageError(413, `image too large (limit ${MAX_PIXELS / 1e6} megapixels)`);
       throw new ImageError(415, 'not a supported image');
     }
-    const mime = MIMES[meta.format];
-    if (!mime || !meta.width || !meta.height) throw new ImageError(415, `unsupported image format${meta.format ? `: ${meta.format}` : ''}`);
+    // sharp reports AVIF as HEIF with AV1 compression; other HEIF (HEIC, i.e. HEVC) stays unsupported.
+    const format = meta.format === 'heif' && meta.compression === 'av1' ? 'avif' : meta.format;
+    const mime = MIMES[format];
+    if (!mime || !meta.width || !meta.height) throw new ImageError(415, `unsupported image format${format ? `: ${format}` : ''}`);
     const orientation = meta.orientation ?? 0;
     const swap = orientation >= 5 && orientation <= 8;
     return {
@@ -73,7 +82,7 @@ export function createStore(dataDir: string) {
 
   async function makeThumb(source: Buffer | string, size: number): Promise<Buffer> {
     // Default sharp reads page 0 only, so animated GIF/WebP thumbs are a still of the first frame.
-    return sharp(source, { failOn: 'none' })
+    return sharp(source, SHARP_OPTS)
       .rotate()
       .resize({ width: size, height: size, fit: 'inside', withoutEnlargement: true })
       .webp({ quality: 82 })

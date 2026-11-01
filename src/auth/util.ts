@@ -19,11 +19,14 @@ export function safeEqual(a: string, b: string) {
   return crypto.timingSafeEqual(sha256(a), sha256(b));
 }
 
+// Cookies whose value isn't valid percent-encoding are skipped, not fatal: other apps on a parent
+// domain can set cookies we receive but don't control (e.g. `other=100%`).
 export function parseCookies(header: string | undefined) {
   const out: Record<string, string> = {};
   for (const part of (header || '').split(';')) {
     const i = part.indexOf('=');
-    if (i > 0) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i <= 0) continue;
+    try { out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim()); } catch { /* skip */ }
   }
   return out;
 }
@@ -49,6 +52,16 @@ export function linkBase(req: Request, publicUrl = ''): string {
   let base = publicUrl || `${req.protocol}://${req.get('host')}`;
   while (base.endsWith('/')) base = base.slice(0, -1); // not a regex: the Host header is untrusted
   return base;
+}
+
+// Whether a request came from one of our own pages, by the browser's word: Sec-Fetch-Site when
+// sent, else an Origin matching our own (linkBase, so X-Forwarded-Proto counts behind a proxy).
+// A request with neither isn't trusted: every current browser sends at least one on a POST.
+export function sameOrigin(req: Request): boolean {
+  const site = req.get('sec-fetch-site');
+  if (site) return site === 'same-origin';
+  const origin = req.get('origin');
+  return !!origin && origin === linkBase(req);
 }
 
 // Salted scrypt, stored as salt:hash. Users carry their own; the `password_hash` setting

@@ -6,7 +6,7 @@ With email set up, Pinnery sends:
 
 - **Invites:** a sign-up link, valid for 24 hours.
 - **Password resets:** from "Forgot password?" on the sign-in page, a link valid for an hour. These are only emailed when `PINNERY_PUBLIC_URL` is set, so the link can't be pointed somewhere else. Without it, an admin can still hand out a reset link from Settings → Users.
-- **Email changes:** a confirmation link to the new address, valid for 24 hours.
+- **Email changes:** a confirmation link to the new address, valid for 24 hours. Once it's confirmed, the old address gets a notice and any reset links sent to it stop working.
 
 ## Setting it up
 

@@ -76,14 +76,15 @@ export function ownerItems(b: OwnedBoard): MenuItem[] {
 }
 
 // Share a board: who has it and as what, with a role to change or a Remove; below, everyone else
-// as "Name · email", filtered as you type, added as a viewer or an editor with one click.
+// as "Name · email" (the email masked for non-admins), filtered by name as you type, added as a
+// viewer or an editor with one click.
 async function shareBoard(b: BoardInfo) {
   let [shares, people] = await Promise.all([api.shares(b.id), api.directory()]);
   const report = (err: unknown) => toast(errorMessage(err), { error: true, ms: 6000 });
   await dialog((close) => {
     const current = el('div', { class: 'tokens' });
     const others = el('div', { class: 'tokens' });
-    const filter = el('input', { class: 'field', placeholder: 'Find someone by name or email', autocomplete: 'off', spellcheck: false, oninput: () => drawOthers() });
+    const filter = el('input', { class: 'field', placeholder: 'Find someone by name', autocomplete: 'off', spellcheck: false, oninput: () => drawOthers() });
 
     function drawCurrent() {
       if (!shares.length) return current.replaceChildren(el('p', { class: 'muted', text: 'Only you can see this board.' }));
@@ -103,7 +104,7 @@ async function shareBoard(b: BoardInfo) {
     function drawOthers() {
       const q = filter.value.trim().toLowerCase();
       const have = new Set(shares.map((s) => s.user_id));
-      const shown = people.filter((p) => !have.has(p.id) && (!q || `${p.display_name} ${p.email}`.toLowerCase().includes(q)));
+      const shown = people.filter((p) => !have.has(p.id) && (!q || p.display_name.toLowerCase().includes(q)));
       if (!shown.length) return others.replaceChildren(el('p', { class: 'muted', text: people.length > have.size ? 'Nobody matches.' : 'Everyone already has it.' }));
       others.replaceChildren(...shown.map((p) => el('div', { class: 'token' },
         el('div', { class: 'token-info' }, el('div', { class: 'token-name', text: `${p.display_name} · ${p.email}` })),

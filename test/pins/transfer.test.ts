@@ -1,10 +1,15 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { jpegBuffer, pngBuffer } from '../helpers/images.ts';
 import { newBoard, upload, type BoardRef } from '../helpers/pins.ts';
-import { createZipWriter } from '../../src/zip.ts';
+import { createZipWriter, openZipFile } from '../../src/zip.ts';
 
 // Build a zip in memory with the app's own writer.
 async function makeZip(entries: [string, string | Buffer][]) {
@@ -140,6 +145,33 @@ describe('export and import', () => {
     assert.equal((await u.get('/api/me')).status, 200);
   });
 
+  it('runs one import at a time', async () => {
+    const u = await server.createUser('grace@example.com', 'grace-password-1');
+    const zip = await makeZip([['pins.json', manifest([])]]);
+    // Hold an import open mid-upload: send the headers and part of the zip, then wait.
+    const req = http.request(new URL('/api/import', server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'content-length': zip.length, cookie: u.cookie()!, 'sec-fetch-site': 'same-origin' },
+    });
+    const first = new Promise<number>((resolve, reject) => {
+      req.on('response', (res) => { res.resume(); resolve(res.statusCode ?? 0); });
+      req.on('error', reject);
+    });
+    req.write(zip.subarray(0, 10));
+    // It holds the lock once its upload is being spooled to a temp file.
+    const tmp = path.join(server.dataDir, 'tmp');
+    const spooling = () => fs.existsSync(tmp) && fs.readdirSync(tmp).some((f) => f.startsWith('import-'));
+    for (let i = 0; i < 250 && !spooling(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(spooling(), 'the first import is being received');
+    const second = await importZip(u, zip);
+    assert.equal(second.status, 409);
+    assert.match(second.body.error, /already running/);
+    req.end(zip.subarray(10));
+    assert.equal(await first, 200);
+    // and the next one goes through
+    assert.equal((await importZip(u, zip)).status, 200);
+  });
+
   it('a good zip with a valid manifest imports', async () => {
     const u = await server.createUser('frank@example.com', 'frank-password-1');
     const png = await pngBuffer({ color: '#202020' });
@@ -153,5 +185,60 @@ describe('export and import', () => {
     const pin = (await u.get(`/api/boards/${b.id}/pins`)).body.pins[0];
     assert.equal(pin.page_title, 'T');
     assert.equal(pin.created_at, '2020-01-02T03:04:05.000Z');
+  });
+
+  it('drops non-http(s) source URLs on import', async () => {
+    const u = await server.createUser('heidi@example.com', 'heidi-password-1');
+    const zip = await makeZip([
+      ['pins.json', manifest([{ name: 'Links', pins: [
+        { file: 'Links/a.png', source_url: 'javascript:alert(1)' },
+        { file: 'Links/b.png', source_url: 'https://example.com/b' },
+      ] }])],
+      ['Links/a.png', await pngBuffer({ color: '#303030' })],
+      ['Links/b.png', await pngBuffer({ color: '#404040' })],
+    ]);
+    assert.equal((await importZip(u, zip)).status, 200);
+    const b = (await u.get('/api/boards')).body[0];
+    const urls = (await u.get(`/api/boards/${b.id}/pins?order=asc`)).body.pins.map((p: { source_url: string | null }) => p.source_url);
+    assert.deepEqual(urls, [null, 'https://example.com/b']);
+  });
+});
+
+describe('zip reader limits', () => {
+  let dir: string;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinnery-zip-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  const write = (name: string, buf: Buffer) => {
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, buf);
+    return file;
+  };
+
+  it('refuses an entry whose declared compressed size is over the cap, before reading it', async () => {
+    const zip = await makeZip([['a.bin', Buffer.alloc(10, 1)], ['pad.bin', crypto.randomBytes(4000)]]);
+    // Rewrite a.bin's compressed size in the central directory (offset 20 of its record) to 3000:
+    // still inside the file, but over the 1000-byte cap while its declared size stays 10.
+    const cd = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+    zip.writeUInt32LE(3000, cd + 20);
+    const z = openZipFile(write('compressed.zip', zip), { maxEntrySize: 1000 });
+    try {
+      const entry = z.entries.find((e) => e.name === 'a.bin')!;
+      assert.throws(() => z.read(entry), /a\.bin: too large/);
+    } finally {
+      z.close();
+    }
+  });
+
+  it('still reads an incompressible entry at the cap, though deflate made it slightly bigger', async () => {
+    const data = crypto.randomBytes(1000);
+    const z = openZipFile(write('incompressible.zip', await makeZip([['r.bin', data]])), { maxEntrySize: 1000 });
+    try {
+      const entry = z.entries[0];
+      assert.ok(entry.compressedSize > 1000, `compressed ${entry.compressedSize}`);
+      assert.deepEqual(z.read(entry), data);
+    } finally {
+      z.close();
+    }
   });
 });

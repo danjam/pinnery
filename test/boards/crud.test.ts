@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { setupBoards } from '../helpers/boards.ts';
 import type { Boards } from '../helpers/boards.ts';
 import type { Client, Server } from '../helpers/server.ts';
+import { pngBuffer } from '../helpers/images.ts';
+import { newBoard, upload } from '../helpers/pins.ts';
 
 let server: Server;
 let owner: Client, board: Boards['board'], pin: Boards['pin'];
@@ -48,6 +50,16 @@ describe('boards and access scoping', () => {
       assert.equal(set.body.cover_pin_id, pin.id);
       const cleared = await owner.patch(`/api/boards/${board.id}`, { cover_pin_id: null });
       assert.equal(cleared.body.cover_pin_id, null);
+    });
+
+    it('a rejected PATCH changes nothing, the name included', async () => {
+      const elsewhere = await newBoard(owner, 'Elsewhere');
+      const foreign = (await upload(owner, elsewhere.id, await pngBuffer({ color: '#445566' }))).body;
+      const path = `/api/boards/${board.id}`;
+      const before = (await owner.get(`${path}/pins`)).body.board.name;
+      assert.equal((await owner.patch(path, { name: 'Renamed', cover_pin_id: foreign.id })).status, 400);
+      assert.equal((await owner.patch(path, { name: 'Renamed', cover_pin_id: 999999 })).status, 400);
+      assert.equal((await owner.get(`${path}/pins`)).body.board.name, before);
     });
   });
 });
