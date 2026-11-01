@@ -9,7 +9,7 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 - Build: `npm run build` (`scripts/build.ts`) bundles the web app (`src/public`) and the extension (`extension/`) into `dist/` with esbuild; the server serves `dist/`, so rebuild after changing either. `npm start` and `npm test` build first. Entry points come from the pages' `<script src>` tags and the extension manifest, so a new script needs no build change.
 - Run: `PINNERY_ADMIN_EMAIL=admin@example.com PINNERY_PASSWORD=test-pass-1 DATA_DIR=<tmp> PORT=<port> node src/server.ts`
 - Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public`, its service worker (`tsconfig.sw.json`) and `extension`). CI runs it before the tests.
-- Test: `npm test` (node --test). Exercise UI changes against a throwaway instance.
+- Test: `npm test` (node --test). Tests live in `test/<area>/` (accounts, auth, boards, pins), plus a few at the top level. Each file boots its own server with `startServer()` from `test/helpers/server.ts`; its header explains the clients and the sign-in throttle budget the tests share. Exercise UI changes against a throwaway instance.
 - Coverage: `npm run coverage` runs the tests under c8 and prints coverage of `src/` (server only; config in `.c8rc.json`). CI shows it in the job summary and uploads it to Coveralls (history, PR changes, the README badge).
 - `node scripts/icons.ts` regenerates extension/app icons from `src/public/icon.svg`.
 
@@ -21,7 +21,12 @@ Node runs the server's `.ts` files directly by stripping the types, so only eras
 
 Use Conventional Commits; release-please derives versions and CHANGELOG.md from them. Merging its Release PR tags, releases and pushes the GHCR image (all in `.github/workflows/release.yml`). Don't tag or bump versions by hand.
 
-The extension isn't versioned separately: the server fingerprints `extension/` at startup, reports it in `/healthz` and stamps it into the downloaded zip's `manifest.json` `version_name`; the options page compares the two to offer updates.
+The extension isn't versioned separately: the server fingerprints the built extension (`dist/extension`) at startup, reports it in `/healthz` and stamps it into the downloaded zip's `manifest.json` `version_name`; the options page compares the two to offer updates.
+
+## Pull requests
+
+- PR titles are Conventional Commits too: the squash merge uses the title, so it becomes the changelog line. The `pr-title` check enforces it, and the master ruleset requires it (with `test`). Keep one change per PR, so each gets its own line.
+- Every check on a PR should be green, optional ones (CodeQL) included. Fix the cause; only dismiss a proven false positive, with the reason.
 
 ## Architecture
 
