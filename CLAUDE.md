@@ -33,6 +33,7 @@ The extension isn't versioned separately: the server fingerprints the built exte
 
 - `src/server.ts` wires modules and lists every route.
 - Fields the middleware sets on `req` (`session`, `user`, `pick`) are declared once, in `src/express.d.ts`.
+- Open pages get live updates over Server-Sent Events (`src/live.ts`, `GET /api/events`; client `js/live.ts`): invalidation pings only, never data. Every write that changes boards or pins calls `notify` (routes.ts), which picks recipients through `access.ts` at send time; for a write that takes access away (unshare, board or user deletion), pass the people who just lost it as `also`.
 - `src/access.ts` is the only place access is decided (owner / viewer / editor). All board, pin and image queries go through it, and foreign ids return 404.
 - `src/auth.ts` builds auth from the modules in `src/auth/`, which share one `createCore()` (lookups, sessions, failure counters).
 - `src/db.ts`: the schema version is SQLite's `user_version`. To change the schema, update `SCHEMA` (new databases) and append a step to `MIGRATIONS` (existing ones). Never edit a step that has shipped.

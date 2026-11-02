@@ -14,6 +14,20 @@ export async function showHome() {
   state.pins = [];
   state.tiles.clear();
   state.boards = await api.boards();
+  renderHome();
+}
+
+// A live update (live.ts) while the home page is open: refetch, and redraw if anything changed and
+// the page is still the home page.
+export async function refreshHome() {
+  const boards = await api.boards();
+  if (state.board || location.pathname !== '/') return;
+  if (JSON.stringify(boards) === JSON.stringify(state.boards)) return;
+  state.boards = boards;
+  renderHome();
+}
+
+function renderHome() {
   document.title = 'Pinnery';
   setCrumbs();
   actionsEl.replaceChildren(

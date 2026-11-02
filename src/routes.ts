@@ -8,6 +8,7 @@ import type { Db, PinRow } from './db.ts';
 import { fetchImage, MAX_BYTES } from './fetch.ts';
 import { ImageError, THUMB_SIZES, isSha } from './images.ts';
 import type { Fingerprint, Store } from './images.ts';
+import type { Live } from './live.ts';
 import { message } from './mail.ts';
 import type { Mailer } from './mail.ts';
 import { publicDir } from './paths.ts';
@@ -70,6 +71,7 @@ interface Person {
 
 export interface RoutesDeps {
   dataDir: string;
+  live: Live;
   mailer?: Mailer;
   publicUrl?: string;
 }
@@ -80,10 +82,21 @@ export type Routes = ReturnType<typeof createRoutes>;
 // token alone — see createPickRoutes below) share the pending store and the board/pin helpers, so
 // one factory builds both. Everything is scoped to a user (req.user, or the pick's creator) through
 // access.ts: another user's ids are simply not found.
-export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl = '' }: RoutesDeps) {
+export function createRoutes(db: Db, store: Store, { dataDir, live, mailer, publicUrl = '' }: RoutesDeps) {
   const api = express.Router();
   api.use(express.json({ limit: '64kb' }));
   const access = createAccess(db);
+
+  // ---- live updates (see live.ts) -----------------------------------------------------------
+  // After a write, ping the open pages of everyone who can see the board now — access.ts decides,
+  // as for the API — plus `also`: people who just lost it (a removed share, a deleted board), so
+  // their open page can leave. `list` when the board joined or left someone's list of boards.
+
+  const seers = (boardId: number) => [...live.users()].filter((u) => access.canSeeBoard(u, boardId));
+  function notify(boardId: number, { also = [], list = false }: { also?: Iterable<number>; list?: boolean } = {}) {
+    const to = new Set([...also, ...seers(boardId)]);
+    live.send(to, list ? [{ type: 'board', id: boardId }, { type: 'boards' }] : [{ type: 'board', id: boardId }]);
+  }
 
   // ---- boards -------------------------------------------------------------------------------
 
@@ -136,6 +149,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   api.post('/boards', (req, res) => {
     const name = cleanName(req.body?.name);
     const { lastInsertRowid } = insertBoard.run(name, req.user.id);
+    notify(Number(lastInsertRowid), { list: true });
     res.status(201).json(boardJson(readBoard(req.user.id, lastInsertRowid)));
   });
 
@@ -161,6 +175,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     }
     if (name !== undefined) renameBoard.run(name, board.id);
     if (coverId !== undefined) setCover.run(coverId, board.id);
+    notify(board.id);
     res.json(boardJson(readBoard(req.user.id, board.id)));
   });
 
@@ -188,7 +203,10 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       moveTo = toId(req.body.move_to);
       if (!moveTo || moveTo === id || !access.canEditBoard(req.user.id, moveTo)) throw bad('invalid destination board');
     }
+    const had = seers(id);   // shares cascade with the board: ask before it goes
     removeUnused(deleteBoard(id, moveTo));
+    notify(id, { also: had, list: true });
+    if (moveTo) notify(moveTo);
     res.json({ ok: true });
   });
 
@@ -252,6 +270,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (user.id === req.user.id) throw bad('that’s your own board');
     const added = !getShare.get(board.id, user.id);
     putShare.run(board.id, user.id, role);
+    notify(board.id, { list: added });
     if (added && mailer?.enabled) {
       const link = `${linkBase(req, publicUrl)}/b/${board.id}`;
       mailer.send({ to: user.email, ...message({
@@ -268,6 +287,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     const board = ownedBoard(req);
     const userId = toId(req.params.userId);
     if (!userId || !dropShare.run(board.id, userId).changes) throw notFound('share');
+    notify(board.id, { also: [userId], list: true });
     res.json({ ok: true });
   });
 
@@ -322,7 +342,9 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   async function savePin(userId: number, boardId: number, buf: Buffer, meta: PinMeta) {
     if (!access.canEditBoard(userId, boardId)) throw notFound('board');
     const info = await store.fingerprint(buf);
-    return storePin(buf, info, () => insert(boardId, info, meta));
+    const pin = await storePin(buf, info, () => insert(boardId, info, meta));
+    notify(boardId);
+    return pin;
   }
 
   // Server-side fetch of an image URL. Body: { board_id, url, source_url?, page_title? }.
@@ -419,6 +441,9 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   }
 
   const deletePinsTx = db.transaction(deletePinRows);
+  // The boards a list of pins is on, read before they're deleted or moved, to notify afterwards.
+  const boardsOfPins = db.prepare<[string], { board_id: number }>('SELECT DISTINCT board_id FROM pins WHERE id IN (SELECT value FROM json_each(?))');
+  const pinBoards = (ids: number[]) => boardsOfPins.all(JSON.stringify(ids)).map((r) => r.board_id);
   function deletePins(ids: number[]) {
     const { changes, shas } = deletePinsTx(ids);
     removeUnused(shas);
@@ -437,7 +462,9 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   api.delete('/pins/:id', (req, res) => {
     const id = toId(req.params.id);
     if (!id || !access.canEditPins(req.user.id, [id])) throw notFound('pin');
+    const boards = pinBoards([id]);
     deletePins([id]);
+    for (const b of boards) notify(b);
     res.json({ ok: true });
   });
 
@@ -445,7 +472,10 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
   api.post('/pins/delete', (req, res) => {
     const ids = idList(req.body?.ids);
     if (!access.canEditPins(req.user.id, ids)) throw notFound('pin');
-    res.json({ deleted: deletePins(ids) });
+    const boards = pinBoards(ids);
+    const deleted = deletePins(ids);
+    for (const b of boards) notify(b);
+    res.json({ deleted });
   });
 
   // Moving pins out of a board is the owner's call; into one, an editor's.
@@ -454,15 +484,19 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
     if (!access.ownsPins(req.user.id, ids)) throw notFound('pin');
     const boardId = toId(req.body?.board_id);
     if (!boardId || !access.canEditBoard(req.user.id, boardId)) throw bad('invalid destination board');
-    res.json({ moved: movePins(ids, boardId) });
+    const boards = pinBoards(ids);
+    const moved = movePins(ids, boardId);
+    for (const b of new Set([...boards, boardId])) notify(b);
+    res.json({ moved });
   });
 
   // ---- export / import (see transfer.ts) ---------------------------------------------------
 
-  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin }));
+  api.use(createTransferRoutes(db, store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin, notify }));
 
-  // deletePinRows and removeUnused are for users.ts, which deletes a user's boards inside its own transaction.
-  return { api, pick: createPickRoutes(), deletePinRows, removeUnused };
+  // deletePinRows and removeUnused are for users.ts, which deletes a user's boards inside its own
+  // transaction; seers and notify for its live updates.
+  return { api, pick: createPickRoutes(), deletePinRows, removeUnused, seers, notify };
 
   // ---- /pick/:token — the board picker page and its token-scoped API ------------------------
   // No session or bearer: the pick token in the path is the credential, good for exactly one
@@ -516,6 +550,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
 
     scoped.post('/boards', (req, res) => {
       const { lastInsertRowid } = insertBoard.run(cleanName(req.body?.name), req.pick.userId);
+      notify(Number(lastInsertRowid), { list: true });
       res.status(201).json(pickBoard(readBoard(req.pick.userId, lastInsertRowid)));
     });
 
@@ -541,6 +576,7 @@ export function createRoutes(db: Db, store: Store, { dataDir, mailer, publicUrl 
       if (!board) throw notFound('board');
       const { buf, info, meta } = pending.take(req.params.token)!; // the scoped middleware's pending.get just found it
       const pin = await storePin(buf, info, () => insert(board.id, info, meta));
+      notify(board.id);
       res.status(201).json({ pin, board: { id: board.id, name: board.name } });
     });
 
