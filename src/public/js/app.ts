@@ -308,13 +308,13 @@ function onLive(e: LiveEvent) {
   if (!state.board || (e.type === 'board' && e.id === state.board.id)) scheduleRefresh();
 }
 
-connectLive(onLive, scheduleRefresh);
+// Resync only once the first render is done, so its refetch can't race the first fetch.
+const routed = route();
+connectLive(onLive, () => { routed.then(scheduleRefresh); });
 
 selMove.onclick = () => movePins([...state.selected]);
 selDelete.onclick = () => deletePins([...state.selected]);
 selCancel.onclick = exitSelect;
-
-route();
 
 // Register the service worker that receives Android shares (it caches nothing else).
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

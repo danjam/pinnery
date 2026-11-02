@@ -1,7 +1,8 @@
 // Live updates: the server pings open pages over Server-Sent Events (/api/events, see src/live.ts)
 // when a board they show changes. A ping only names what changed; the page refetches through the
-// API. EventSource reconnects by itself after a dropped connection, and every reconnect calls
-// `resync`, since pings sent while it was down are lost.
+// API. Every open calls `resync`: the first, because a write can land between the page's first
+// fetch and the stream opening; later ones (EventSource reconnects by itself after a drop),
+// because pings sent while it was down are lost.
 import { api } from './api.ts';
 
 export type LiveEvent = { type: 'board'; id: number } | { type: 'boards' };
@@ -9,15 +10,13 @@ export type LiveEvent = { type: 'board'; id: number } | { type: 'boards' };
 const MAX_RETRY_MS = 60_000;
 
 export function connectLive(onEvent: (e: LiveEvent) => void, resync: () => void) {
-  let opened = false;
   let retryMs = 1000;
 
   function connect() {
     const source = new EventSource('/api/events');
     source.onopen = () => {
       retryMs = 1000;
-      if (opened) resync();
-      opened = true;
+      resync();
     };
     source.onmessage = (m) => {
       let e: LiveEvent;

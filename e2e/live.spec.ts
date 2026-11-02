@@ -68,3 +68,20 @@ test('losing a shared board takes its open page home', async ({ user, server, br
 
   await lennyContext.close();
 });
+
+test('a change made while the stream is still opening is not missed', async ({ page, user }) => {
+  const board = await newBoard(user.client, 'Gap');
+  // Hold the event stream back until the page has drawn the board, then add a pin before letting
+  // it through: no ping can reach the page, so only the resync on first open can show the pin.
+  let release!: () => void;
+  const held = new Promise<void>((r) => { release = r; });
+  await page.route('**/api/events', async (route) => { await held; await route.continue(); });
+  const pinsLoaded = page.waitForResponse((r) => new URL(r.url()).pathname === `/api/boards/${board.id}/pins`);
+  await page.goto(`/b/${board.id}`);
+  await pinsLoaded;
+  await expect(page.getByRole('heading', { name: 'No pins yet' })).toBeVisible();
+
+  await upload(user.client, board.id, await pngBuffer({ color: '#12abcd' }));
+  release();
+  await expect(page.locator('.tile')).toHaveCount(1);
+});
