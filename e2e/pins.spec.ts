@@ -89,9 +89,12 @@ test('the lightbox fits a tall image on screen', async ({ page, user }) => {
   await page.locator('.tile').first().click();
   const img = page.getByRole('dialog').locator('.stage img');
   await expect(img).toHaveJSProperty('complete', true);
+  // complete is also true for a broken image: check it loaded, then that it shrank to fit.
+  await expect(img).not.toHaveJSProperty('naturalWidth', 0);
   const box = await img.boundingBox();
   expect(box!.y).toBeGreaterThanOrEqual(0);
   expect(box!.y + box!.height).toBeLessThanOrEqual(1440);
+  expect(box!.height).toBeGreaterThan(1400);
 });
 
 test('the lightbox only links http(s) sources', async ({ page, user }) => {
