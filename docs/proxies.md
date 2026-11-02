@@ -22,4 +22,4 @@ So when a proxy is in front, make the proxy the only way in:
 
 ## Live updates
 
-Open pages keep a connection to `/api/events` (Server-Sent Events) so changes made elsewhere show up without a reload. Pinnery sends a heartbeat every 25 seconds and marks the stream `Cache-Control: no-transform` and `X-Accel-Buffering: no`, so Traefik, Caddy and Nginx pass it through as is. If your proxy buffers responses or times out idle ones in under 25 seconds, turn that off for `/api/events`, or pages will only catch up when they reconnect.
+Open pages keep a connection to `/api/events` (Server-Sent Events) so changes made elsewhere show up without a reload. Pinnery sends a heartbeat every 25 seconds and marks the stream `Cache-Control: no-transform` and `X-Accel-Buffering: no`. Your proxy must pass `/api/events` through unbuffered, with an idle timeout over 25 seconds, or pages only catch up when they reconnect.
