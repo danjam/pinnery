@@ -53,6 +53,8 @@ test('selection survives a tile scrolling away and back', async ({ page, server,
   const { ids } = await bigBoard(page, server, user);
   await page.getByRole('button', { name: 'Select' }).click();
   await tileFor(page, ids[0]).click();
+  // The click focused it, and a focused tile stays mounted; this test is about remounting.
+  await page.evaluate('document.activeElement.blur()');
 
   await toBottom(page);
   await expect(tileFor(page, ids[0])).toHaveCount(0);
@@ -85,4 +87,21 @@ test('a live update reaches a big board', async ({ page, server, user }) => {
   await toBottom(page);
   await expect(tileFor(page, ids.at(-2)!)).toBeVisible();
   await expect(tileFor(page, ids.at(-1)!)).toHaveCount(0);
+});
+
+test('a focused tile stays mounted when it scrolls away', async ({ page, server, user }) => {
+  const { ids } = await bigBoard(page, server, user);
+  await tileFor(page, ids[0]).focus();
+
+  await toBottom(page);
+  await expect(tileFor(page, ids.at(-1)!)).toBeVisible();
+  await expect(tileFor(page, ids[1])).toHaveCount(0);
+  await expect(tileFor(page, ids[0])).toBeFocused();
+  // Still first in the grid, so tab order matches display order.
+  await expect(page.locator('.grid .tile').first()).toHaveAttribute('data-id', String(ids[0]));
+  expect(await page.locator('.grid .tile').count()).toBeLessThan(TOTAL / 4);
+
+  // Once focus moves elsewhere it unmounts like any other tile.
+  await page.evaluate('document.activeElement.blur(); window.scrollBy(0, -1)');
+  await expect(tileFor(page, ids[0])).toHaveCount(0);
 });

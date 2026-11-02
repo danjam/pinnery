@@ -103,15 +103,18 @@ function displayedPins() {
 // Only tiles within a screen of the viewport are in the DOM: a big board would otherwise mean
 // thousands of elements. Every pin gets a slot (masonry.ts), so the grid has its full height, and
 // scrolling mounts tiles as they come near and unmounts those left behind. state.tiles holds the
-// mounted ones; selection and the lightbox work from the pin list, not the DOM.
+// mounted ones; selection and the lightbox work from the pin list, not the DOM. A focused tile
+// stays mounted wherever it is, so focus isn't lost to the page.
 const WINDOW_MARGIN = 1;   // screens kept mounted above and below the viewport
-let slots: Slot[] = [];    // displayedPins()[i] goes in slots[i]
+let order: Pin[] = [];     // displayedPins() as of the last relayout
+let slots: Slot[] = [];    // order[i] goes in slots[i]
 let thumbSize = 400;
 
 export function renderGrid() {
   if (!grid) return;
   const pins = displayedPins();
-  slots = [];   // until relayout slots the new list
+  order = [];   // until relayout slots the new list
+  slots = [];
   if (!pins.length) {
     state.tiles.clear();
     grid.replaceChildren(el('div', { class: 'empty' },
@@ -136,33 +139,46 @@ function relayout() {
   const pins = displayedPins();
   const result = layout(grid, pins);
   if (!result) return;
+  order = pins;
   slots = result.slots;
   thumbSize = result.colW * devicePixelRatio > 400 ? 800 : 400;
   pins.forEach((p, i) => { const t = state.tiles.get(p.id); if (t) place(t, slots[i]); });
   updateWindow();
 }
 
+function focusedPin() {
+  const active = document.activeElement;
+  for (const [id, t] of state.tiles) if (t.contains(active)) return id;
+  return undefined;
+}
+
 // Mount the tiles whose slots are near the viewport, in display order, and unmount the rest.
 function updateWindow() {
   if (!grid?.isConnected || !slots.length) return;
-  const pins = displayedPins();
   const margin = innerHeight * WINDOW_MARGIN;
   const top = -grid.getBoundingClientRect().top - margin;
   const bottom = top + innerHeight + 2 * margin;
+  const focused = focusedPin();
   const keep = new Set<number>();
+  // A focused tile below the window is never reached; it's already after the window in the DOM.
+  if (focused !== undefined) keep.add(focused);
   let prev: HTMLElement | null = null;
   for (let i = 0; i < slots.length; i++) {
     const slot = slots[i];
     if (slot.y > bottom) break;   // slots' y never decreases down the list
-    if (slot.y + slot.h < top) continue;
-    const pin = pins[i];
+    const pin = order[i];
+    // A focused tile above the window still counts, so tiles mounted after it go after it.
+    if (slot.y + slot.h < top && pin.id !== focused) continue;
     keep.add(pin.id);
     let t = state.tiles.get(pin.id);
     if (!t) {
       t = tile(pin);
       t.classList.toggle('selected', state.selected.has(pin.id));
       place(t, slot);
-      t.querySelector('img')!.src = thumbUrl(pin, thumbSize);   // every tile has its <img>
+      const img = t.querySelector('img')!;   // every tile has its <img>
+      img.src = thumbUrl(pin, thumbSize);
+      // Already in the memory cache (a tile scrolled back into view): show it without the fade.
+      if (img.complete && img.naturalWidth) img.classList.add('loaded');
       state.tiles.set(pin.id, t);
       if (prev) prev.after(t); else grid.prepend(t);
     }
