@@ -32,7 +32,7 @@ export const state: {
   order: localStorage.getItem('pinnery.order') === 'asc' ? 'asc' : 'desc',
   selecting: false,
   selected: new Set(),
-  tiles: new Map(),   // pin id -> tile element, reused across re-layouts
+  tiles: new Map(),   // pin id -> tile element, for the board's mounted tiles (see app.ts)
 };
 
 // The open board, for the functions that only run on a board's page.
