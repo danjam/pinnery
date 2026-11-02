@@ -5,7 +5,8 @@ import type { Pin } from './api.ts';
 import { el, toast, confirm, prompt, pickBoard } from './ui.ts';
 import type { MenuEntry } from './ui.ts';
 import { icon } from './icons.ts';
-import { layout } from './masonry.ts';
+import { layout, place } from './masonry.ts';
+import type { Slot } from './masonry.ts';
 import { openLightbox } from './lightbox.ts';
 import { view, actionsEl, selectbar, selectCount, selMove, selDelete, selCancel, state, openBoard, setCrumbs, moreButton, isOwner, canAdd, sharedBy, pinnable, signOut } from './page.ts';
 import { showHome, refreshHome, ownerItems } from './home.ts';
@@ -99,12 +100,20 @@ function displayedPins() {
   return state.order === 'asc' ? [...state.pins].reverse() : state.pins;
 }
 
-// Build or reuse tile elements in display order, lay them out, then start loading thumbnails
-// at a size matched to the column width and screen density.
+// Only tiles within a screen of the viewport are in the DOM: a big board would otherwise mean
+// thousands of elements. Every pin gets a slot (masonry.ts), so the grid has its full height, and
+// scrolling mounts tiles as they come near and unmounts those left behind. state.tiles holds the
+// mounted ones; selection and the lightbox work from the pin list, not the DOM.
+const WINDOW_MARGIN = 1;   // screens kept mounted above and below the viewport
+let slots: Slot[] = [];    // displayedPins()[i] goes in slots[i]
+let thumbSize = 400;
+
 export function renderGrid() {
   if (!grid) return;
   const pins = displayedPins();
+  slots = [];   // until relayout slots the new list
   if (!pins.length) {
+    state.tiles.clear();
     grid.replaceChildren(el('div', { class: 'empty' },
       el('h2', { text: 'No pins yet' }),
       canAdd(openBoard()) && el('p', {}, 'Right-click any image → ', el('kbd', { text: 'Pin to Pinnery' }), ', or use ', el('kbd', { text: '+ Pin' })),
@@ -113,33 +122,61 @@ export function renderGrid() {
     grid.style.height = '';
     return;
   }
-  const seen = new Set();
-  const nodes = pins.map((pin) => {
-    seen.add(pin.id);
-    let t = state.tiles.get(pin.id);
-    if (!t) { t = tile(pin); state.tiles.set(pin.id, t); }
-    return t;
-  });
-  for (const [id, t] of state.tiles) if (!seen.has(id)) { t.remove(); state.tiles.delete(id); }
-  grid.replaceChildren(...nodes);
+  // Keep the mounted tiles of pins still on the board, in display order; updateWindow adds the rest.
+  const ids = new Set(pins.map((p) => p.id));
+  for (const [id, t] of state.tiles) if (!ids.has(id)) { t.remove(); state.tiles.delete(id); }
+  grid.replaceChildren(...pins.flatMap((p) => state.tiles.get(p.id) ?? []));
   relayout();
 }
 
+// Slot every pin, move the mounted tiles to their new slots, then mount what's now in view.
+// Thumbnails are sized to the column width and screen density.
 function relayout() {
   if (!grid || !state.pins.length) return;
   const pins = displayedPins();
-  // renderGrid made a tile for every pin in the list.
-  const colW = layout(grid, pins.map((p) => ({ el: state.tiles.get(p.id)!, width: p.width, height: p.height })));
-  if (!colW) return;
-  const size = colW * devicePixelRatio > 400 ? 800 : 400;
-  for (const p of pins) {
-    const img = state.tiles.get(p.id)!.querySelector('img')!;   // every tile has its <img>
-    if (!img.dataset.size) {
-      img.dataset.size = String(size);
-      img.src = thumbUrl(p, size);
-    }
-  }
+  const result = layout(grid, pins);
+  if (!result) return;
+  slots = result.slots;
+  thumbSize = result.colW * devicePixelRatio > 400 ? 800 : 400;
+  pins.forEach((p, i) => { const t = state.tiles.get(p.id); if (t) place(t, slots[i]); });
+  updateWindow();
 }
+
+// Mount the tiles whose slots are near the viewport, in display order, and unmount the rest.
+function updateWindow() {
+  if (!grid?.isConnected || !slots.length) return;
+  const pins = displayedPins();
+  const margin = innerHeight * WINDOW_MARGIN;
+  const top = -grid.getBoundingClientRect().top - margin;
+  const bottom = top + innerHeight + 2 * margin;
+  const keep = new Set<number>();
+  let prev: HTMLElement | null = null;
+  for (let i = 0; i < slots.length; i++) {
+    const slot = slots[i];
+    if (slot.y > bottom) break;   // slots' y never decreases down the list
+    if (slot.y + slot.h < top) continue;
+    const pin = pins[i];
+    keep.add(pin.id);
+    let t = state.tiles.get(pin.id);
+    if (!t) {
+      t = tile(pin);
+      t.classList.toggle('selected', state.selected.has(pin.id));
+      place(t, slot);
+      t.querySelector('img')!.src = thumbUrl(pin, thumbSize);   // every tile has its <img>
+      state.tiles.set(pin.id, t);
+      if (prev) prev.after(t); else grid.prepend(t);
+    }
+    prev = t;
+  }
+  for (const [id, t] of state.tiles) if (!keep.has(id)) { t.remove(); state.tiles.delete(id); }
+}
+
+let windowFrame = 0;
+function scheduleWindow() {
+  if (!windowFrame) windowFrame = requestAnimationFrame(() => { windowFrame = 0; updateWindow(); });
+}
+window.addEventListener('scroll', scheduleWindow, { passive: true });
+window.addEventListener('resize', scheduleWindow);
 
 function tile(pin: Pin) {
   const img = el('img', { alt: pin.page_title || '', loading: 'lazy', decoding: 'async' });
