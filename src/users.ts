@@ -17,9 +17,11 @@ export interface UserRoutesDeps {
   auth: Auth;
   deletePinRows: (ids: number[]) => { changes: number; shas: string[] };
   removeUnused: (shas: Iterable<string>) => void;
+  seers: (boardId: number) => number[];
+  notify: (boardId: number, opts: { also: Iterable<number>; list: boolean }) => void;
 }
 
-export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: UserRoutesDeps) {
+export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused, seers, notify }: UserRoutesDeps) {
   const r = express.Router();
 
   const listUsers = db.prepare<[], Pick<UserRow, 'id' | 'email' | 'display_name' | 'is_admin' | 'created_at'> & { last_seen_at: string | null; boards: number; pins: number }>(`
@@ -76,8 +78,14 @@ export function createUserRoutes(db: Db, { auth, deletePinRows, removeUnused }: 
     return shas;
   });
 
+  // Everyone who can see the user's boards hears they're gone (live.ts), asked before the delete:
+  // the shares cascade with it. The user's own open pages are among them; their sessions are gone,
+  // so that ping ends their streams instead.
   r.delete('/:id', (req, res) => {
-    removeUnused(deleteUser(toId(req.params.id), req.user.id));
+    const id = toId(req.params.id);
+    const had = id ? ownedBoards.all(id).map((b) => ({ id: b.id, seers: seers(b.id) })) : [];
+    removeUnused(deleteUser(id, req.user.id));
+    for (const b of had) notify(b.id, { also: b.seers, list: true });
     res.json({ ok: true });
   });
 

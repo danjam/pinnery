@@ -50,6 +50,7 @@ export interface TransferDeps {
   cleanText: (v: unknown, max: number) => string | null;
   cleanUrl: (v: unknown) => string | null;
   storePin: <T extends { id: number }>(buf: Buffer, info: Fingerprint, insertRow: () => T) => Promise<T>;
+  notify: (boardId: number, opts?: { list?: boolean }) => void;
 }
 
 type BoardStub = Pick<BoardRow, 'id' | 'name' | 'cover_pin_id'>;
@@ -72,7 +73,7 @@ interface ImportBoard {
   pins: ImportPin[];
 }
 
-export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin }: TransferDeps) {
+export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cleanName, cleanText, cleanUrl, storePin, notify }: TransferDeps) {
   const r = express.Router();
 
   const allBoards = db.prepare<{ user: number }, BoardStub>(`SELECT b.id, b.name, b.cover_pin_id FROM boards b WHERE ${access.OWNS} ORDER BY b.name COLLATE NOCASE, b.id`);
@@ -266,6 +267,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       // board this run created and never filled is removed again.
       const summary = { boards_created: 0, boards_merged: 0, pins_added: 0, pins_skipped: 0 };
       const created: number[] = [];
+      const touched = new Set<number>();
       try {
         for (const board of boards) {
           let row = boardByName.get({ name: board.name, user: req.user.id });
@@ -276,6 +278,7 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
             created.push(row.id);
             summary.boards_created++;
           }
+          touched.add(row.id);
           for (const pin of board.pins) {
             let buf: Buffer;
             let info: Fingerprint;
@@ -298,6 +301,10 @@ export function createTransferRoutes(db: Db, store: Store, { dataDir, access, cl
       } catch (e) {
         for (const id of created) if (!anyPin.get(id)) deleteBoard.run(id);
         throw e;
+      } finally {
+        // Open pages hear about it once, at the end, whether it finished or not: a failed import
+        // keeps the pins it saved. A created board removed again reaches no one (nobody can see it).
+        for (const id of touched) notify(id, { list: created.includes(id) });
       }
       return summary;
     } finally {

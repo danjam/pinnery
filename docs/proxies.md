@@ -19,3 +19,7 @@ So when a proxy is in front, make the proxy the only way in:
 - **Proxy in Docker:** remove the `ports:` lines and put Pinnery on the proxy's Docker network.
 - **Proxy on the same machine, outside Docker:** publish to localhost only, `127.0.0.1:3420:3420`.
 - **Proxy on another machine:** firewall the port so only the proxy can reach it. Docker-published ports skip `ufw`, so filter in the `DOCKER-USER` chain instead.
+
+## Live updates
+
+Open pages keep a connection to `/api/events` (Server-Sent Events) so changes made elsewhere show up without a reload. Pinnery sends a heartbeat every 25 seconds and marks the stream `Cache-Control: no-transform` and `X-Accel-Buffering: no`, so Traefik, Caddy and Nginx pass it through as is. If your proxy buffers responses or times out idle ones in under 25 seconds, turn that off for `/api/events`, or pages will only catch up when they reconnect.

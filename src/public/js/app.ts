@@ -1,6 +1,6 @@
 // The web app's entry: routing, the board view and multi-select. The home page, settings and
 // adding pins are in their own modules; page.ts holds the state they share.
-import { api, thumbUrl, errorMessage } from './api.ts';
+import { api, apiError, thumbUrl, errorMessage } from './api.ts';
 import type { Pin } from './api.ts';
 import { el, toast, confirm, prompt, pickBoard } from './ui.ts';
 import type { MenuEntry } from './ui.ts';
@@ -8,9 +8,11 @@ import { icon } from './icons.ts';
 import { layout } from './masonry.ts';
 import { openLightbox } from './lightbox.ts';
 import { view, actionsEl, selectbar, selectCount, selMove, selDelete, selCancel, state, openBoard, setCrumbs, moreButton, isOwner, canAdd, sharedBy, pinnable, signOut } from './page.ts';
-import { showHome, ownerItems } from './home.ts';
+import { showHome, refreshHome, ownerItems } from './home.ts';
 import { showSettings } from './settings.ts';
 import { addPinDialog } from './add-pins.ts';
+import { connectLive } from './live.ts';
+import type { LiveEvent } from './live.ts';
 
 // ---- routing ------------------------------------------------------------------------------
 
@@ -247,6 +249,66 @@ function updateSelectbar() {
   selMove.disabled = !n;
   selDelete.disabled = !n;
 }
+
+// ---- live updates (live.ts) -----------------------------------------------------------------
+// The board page refetches when its board is pinged, the home page on any ping, and both once
+// after a reconnect. Pings come in bursts (an import sends one per board, a bulk delete one per
+// board), so refreshes are batched, and run one at a time.
+
+async function refreshBoard(id: number) {
+  let data;
+  try {
+    data = await api.boardPins(id);
+  } catch (e) {
+    const status = apiError(e)?.status;
+    // The board is gone, or no longer shared with this user: back home.
+    if ((status === 403 || status === 404) && state.board?.id === id) {
+      toast('That board is no longer available');
+      navigate('/');
+      return;
+    }
+    throw e;
+  }
+  if (state.board?.id !== id) return;   // navigated away meanwhile
+  if (JSON.stringify(data) === JSON.stringify({ board: state.board, pins: state.pins })) return;
+  state.board = data.board;
+  state.pins = data.pins;
+  document.title = `${data.board.name} — Pinnery`;
+  if (state.selecting && !canAdd(data.board)) exitSelect();
+  const ids = new Set(data.pins.map((p) => p.id));
+  for (const s of state.selected) if (!ids.has(s)) state.selected.delete(s);
+  renderBoardHeader();
+  renderGrid();
+  if (state.selecting) updateSelectbar();
+}
+
+let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+let refreshing = false;
+let refreshAgain = false;
+
+function scheduleRefresh() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(runRefresh, 150);
+}
+
+async function runRefresh() {
+  if (refreshing) { refreshAgain = true; return; }
+  refreshing = true;
+  try {
+    if (state.board) await refreshBoard(state.board.id);
+    else if (location.pathname === '/') await refreshHome();
+  } catch { /* a failed refresh changes nothing; the next ping or reconnect tries again */ }
+  refreshing = false;
+  if (refreshAgain) { refreshAgain = false; scheduleRefresh(); }
+}
+
+function onLive(e: LiveEvent) {
+  // On a board page, the move dialog's list of boards is fetched again when next needed.
+  if (e.type === 'boards' && state.board) state.boards = [];
+  if (!state.board || (e.type === 'board' && e.id === state.board.id)) scheduleRefresh();
+}
+
+connectLive(onLive, scheduleRefresh);
 
 selMove.onclick = () => movePins([...state.selected]);
 selDelete.onclick = () => deletePins([...state.selected]);

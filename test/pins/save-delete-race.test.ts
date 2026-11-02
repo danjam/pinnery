@@ -11,6 +11,7 @@ import type { Db, PinRow } from '../../src/db.ts';
 import { createStore } from '../../src/images.ts';
 import type { Store } from '../../src/images.ts';
 import { createRoutes } from '../../src/routes.ts';
+import { createLive } from '../../src/live.ts';
 import type { Routes } from '../../src/routes.ts';
 import { pngBuffer } from '../helpers/images.ts';
 
@@ -36,7 +37,7 @@ describe('saves and deletes sharing an original', () => {
     };
     const userId = Number(db.prepare("INSERT INTO users (email, display_name, password_hash) VALUES ('a@example.com', 'a', 'x')").run().lastInsertRowid);
     boardId = Number(db.prepare('INSERT INTO boards (name, owner_id) VALUES (?, ?)').run('b', userId).lastInsertRowid);
-    routes = createRoutes(db, gated, { dataDir });
+    routes = createRoutes(db, gated, { dataDir, live: createLive(db) });
     const app = express();
     app.use((req, _res, next) => {
       req.user = { id: userId, email: 'a@example.com', display_name: 'a', is_admin: false, must_change_password: false };

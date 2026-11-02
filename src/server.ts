@@ -12,6 +12,7 @@ import { createMailer } from './mail.ts';
 import { createStore, ImageError } from './images.ts';
 import { createRoutes, createImageRoutes } from './routes.ts';
 import { createUserRoutes } from './users.ts';
+import { createLive } from './live.ts';
 import { zipDirectory, walk } from './zip.ts';
 import { rootDir, publicDir, extensionDir } from './paths.ts';
 
@@ -137,8 +138,11 @@ app.use((req, res, next) => {
 });
 
 // Compress text responses (brotli, else gzip) so it doesn't depend on the proxy. The default filter
-// only compresses compressible types, so images, thumbnails and zips go out as they are.
-app.use(compression());
+// only compresses compressible types, so images, thumbnails and zips go out as they are. The live
+// event stream is left alone: compression buffers, and its pings must go out as they're written.
+// (Its Cache-Control: no-transform would skip it too; this says so where it's decided.)
+const EVENTS_PATH = '/api/events';
+app.use(compression({ filter: (req, res) => req.path !== EVENTS_PATH && compression.filter(req, res) }));
 
 app.get('/healthz', (req, res) => res.json({ ok: true, version: VERSION, extension_fingerprint: EXTENSION_FINGERPRINT }));
 
@@ -221,11 +225,14 @@ app.post('/api/connect/token', express.json({ limit: '4kb' }), auth.exchangeCode
 app.get('/api/tokens', auth.requireApi, auth.listTokens);
 app.delete('/api/tokens/:id', auth.requireApi, auth.revokeToken);
 
-const routes = createRoutes(db, store, { dataDir: DATA_DIR, mailer, publicUrl: PUBLIC_URL });
+// Live updates for open pages (live.ts): a Server-Sent Events stream, signed in like the API.
+const live = createLive(db);
+app.get(EVENTS_PATH, auth.requireApi, live.handler);
+const routes = createRoutes(db, store, { dataDir: DATA_DIR, live, mailer, publicUrl: PUBLIC_URL });
 app.use('/api', auth.requireApi, routes.api);
 // Settings → Users (admins): list, promote/demote, delete, hand over a reset link. See users.ts.
 // After the API, whose /api/users/directory (the share picker) is for everyone.
-app.use('/api/users', json, auth.requireApi, auth.requireAdmin, createUserRoutes(db, { auth, deletePinRows: routes.deletePinRows, removeUnused: routes.removeUnused }));
+app.use('/api/users', json, auth.requireApi, auth.requireAdmin, createUserRoutes(db, { auth, deletePinRows: routes.deletePinRows, removeUnused: routes.removeUnused, seers: routes.seers, notify: routes.notify }));
 app.use(['/i', '/t'], auth.requireApi);
 app.use(createImageRoutes(db, store));
 // The extension's board picker: a page authenticated by its pending token alone (see routes.ts).
@@ -294,6 +301,7 @@ const server = app.listen(PORT, '0.0.0.0', (err) => {
 function shutdown(signal: string) {
   console.log(`${signal}: shutting down`);
   setTimeout(() => process.exit(0), 5000).unref(); // don't wait forever on a slow request
+  live.closeAll(); // event streams never finish on their own
   server.close(() => {
     db.close();
     process.exit(0);
