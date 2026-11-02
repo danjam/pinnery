@@ -544,6 +544,9 @@ dialog.lightbox::backdrop { background: #000; }
   grid-area: 1 / 1;
   position: relative;
   display: grid;
+  /* A fixed track, not auto: the image's max-height: 100% needs a definite height to resolve
+     against, or a tall image keeps its natural size and the overflow clips it. */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   place-items: center;
   overflow: hidden;
   min-height: 0;

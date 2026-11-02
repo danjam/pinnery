@@ -80,6 +80,20 @@ test('deletes a pin from the lightbox', async ({ page, user }) => {
   expect(body.pins).toEqual([]);
 });
 
+test('the lightbox fits a tall image on screen', async ({ page, user }) => {
+  await page.setViewportSize({ width: 3440, height: 1440 });
+  const board = await newBoard(user.client, 'Tall');
+  await upload(user.client, board.id, await pngBuffer({ width: 1000, height: 3000 }));
+  await page.goto(`/b/${board.id}`);
+
+  await page.locator('.tile').first().click();
+  const img = page.getByRole('dialog').locator('.stage img');
+  await expect(img).toHaveJSProperty('complete', true);
+  const box = await img.boundingBox();
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(1440);
+});
+
 test('the lightbox only links http(s) sources', async ({ page, user }) => {
   const board = await newBoard(user.client, 'Legacy');
   await upload(user.client, board.id, await pngBuffer({ color: '#00ffff' }), '&name=Old%20pin');
