@@ -168,7 +168,8 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
       });
       claims = tokens.claims()!;
       ({ email, email_verified: verified } = claims);
-      if (email === undefined) {
+      // Some providers put the email, or whether it's verified, only in userinfo.
+      if (email === undefined || verified === undefined) {
         const info = await client.fetchUserInfo(cfg, tokens.access_token, claims.sub);
         ({ email, email_verified: verified } = info);
       }

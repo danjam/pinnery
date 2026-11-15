@@ -21,6 +21,8 @@ export interface Identity {
   email_verified?: boolean;
   /** Put the email only in userinfo, not the ID token. */
   emailInUserinfoOnly?: boolean;
+  /** Put email_verified only in userinfo; the ID token carries just the email. */
+  verifiedInUserinfoOnly?: boolean;
   /** Override the nonce the ID token carries. */
   nonce?: string;
 }
@@ -59,7 +61,7 @@ export async function startIdp() {
   function idToken(identity: Identity, nonce: string) {
     const now = Math.floor(Date.now() / 1000);
     const claims: Record<string, unknown> = { iss: issuer, aud: CLIENT_ID, sub: identity.sub, iat: now, exp: now + 300, nonce: identity.nonce ?? nonce };
-    if (!identity.emailInUserinfoOnly) Object.assign(claims, { email: identity.email, email_verified: identity.email_verified });
+    if (!identity.emailInUserinfoOnly) Object.assign(claims, { email: identity.email, ...(!identity.verifiedInUserinfoOnly && { email_verified: identity.email_verified }) });
     const input = `${b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: 'test' }))}.${b64url(JSON.stringify(claims))}`;
     return `${input}.${b64url(crypto.sign('sha256', Buffer.from(input), privateKey))}`;
   }

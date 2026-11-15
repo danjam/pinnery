@@ -93,6 +93,12 @@ describe('SSO sign-in (OIDC)', () => {
     assert.equal((await me(server, r.session)).email, 'ivan@example.com');
   });
 
+  it('reads email_verified from userinfo when the ID token has only the email', async () => {
+    const r = await signIn(server, idp, { sub: 'heidi-sub', email: 'heidi@example.com', email_verified: true, verifiedInUserinfoOnly: true });
+    assert.ok(r.session);
+    assert.equal((await me(server, r.session)).email, 'heidi@example.com');
+  });
+
   it('refuses a mismatched state or nonce', async () => {
     const state = await signIn(server, idp, { sub: 'grace-sub' }, { tamper: (u) => u.searchParams.set('state', 'f'.repeat(64)) });
     assert.equal(state.location, '/login?error=sso_failed');
@@ -118,6 +124,30 @@ describe('SSO sign-in (OIDC)', () => {
 
   it('leaves password sign-in working for a linked user', async () => {
     await server.login('grace@example.com', 'grace-password-1');
+  });
+});
+
+describe('SSO sign-in while a password change is required', () => {
+  let server: Server, idp: Idp;
+  before(async () => {
+    idp = await startIdp();
+    server = await startServer({
+      env: (url) => ({ PINNERY_PUBLIC_URL: url, PINNERY_OIDC_ISSUER: idp.issuer, PINNERY_OIDC_CLIENT_ID: CLIENT_ID, PINNERY_OIDC_CLIENT_SECRET: CLIENT_SECRET }),
+    });
+  });
+  after(async () => {
+    await server.stop();
+    await idp.close();
+  });
+
+  it('signs in, then sends the user to choose a password like a password sign-in would', async () => {
+    // The seeded admin, never signed in: their PINNERY_PASSWORD must still be changed.
+    const r = await signIn(server, idp, { sub: 'admin-sub', email: server.adminEmail, email_verified: true }, { next: '/settings' });
+    assert.equal(r.location, '/settings');
+    assert.ok(r.session);
+    const page = await fetch(`${server.url}/settings`, { redirect: 'manual', headers: { cookie: r.session } });
+    assert.equal(page.headers.get('location'), '/password?next=%2Fsettings');
+    assert.equal((await fetch(`${server.url}/api/me`, { headers: { cookie: r.session } })).status, 403);
   });
 });
 
