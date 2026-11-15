@@ -144,8 +144,11 @@ function makeClient(base: string, { cookie = null, token = null, email = null, p
 }
 
 export interface StartOpts {
-  /** Extra/overriding environment variables (e.g. { PINNERY_PUBLIC_URL: '...' }). */
-  env?: Record<string, string>;
+  /**
+   * Extra/overriding environment variables (e.g. { PINNERY_PUBLIC_URL: '...' }), or a function
+   * given the server's URL (not known until its port is picked) that returns them.
+   */
+  env?: Record<string, string> | ((url: string) => Record<string, string>);
   /** Also start the SMTP sink and point the server at it. */
   mail?: boolean;
 }
@@ -233,7 +236,7 @@ async function startOnce({ env = {}, mail = false }: StartOpts): Promise<Server>
       PINNERY_PUBLIC_URL: `http://127.0.0.1:${port}`,
     });
   }
-  Object.assign(childEnv, env);
+  Object.assign(childEnv, typeof env === 'function' ? env(`http://127.0.0.1:${port}`) : env);
 
   let out = '';
   const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });

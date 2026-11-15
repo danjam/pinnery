@@ -738,6 +738,7 @@ dialog.lightbox::backdrop { background: #000; }
 }
 .login input:focus { border-color: var(--accent); }
 .login .error { margin: 0; text-align: center; }
+.login .btn[hidden] { display: none; }
 .login h2 { margin: 0; font-size: 17px; text-align: center; }
 .login .muted { margin: 0 0 var(--space-2); text-align: center; }
 .login .links { margin: 0; }

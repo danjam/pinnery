@@ -13,6 +13,7 @@ export interface UserRow {
   is_admin: number;
   must_change_password: number;
   created_at: string;
+  oidc_sub: string | null;
 }
 
 export interface BoardRow {
@@ -44,8 +45,10 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash         TEXT NOT NULL,            -- salt:scrypt, see auth.ts
   is_admin              INTEGER NOT NULL DEFAULT 0,
   must_change_password  INTEGER NOT NULL DEFAULT 0,
-  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  oidc_sub              TEXT                      -- the SSO provider's subject, once linked (auth/oidc.ts)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_sub ON users(oidc_sub);
 
 CREATE TABLE IF NOT EXISTS boards (
   id            INTEGER PRIMARY KEY,
@@ -165,6 +168,12 @@ const MIGRATIONS: ((db: Db) => void)[] = [
     // foreign key to an existing table); auth.ts fills them in when it seeds the admin.
     if (!hasColumn(db, 'boards', 'owner_id')) db.exec('ALTER TABLE boards ADD COLUMN owner_id INTEGER REFERENCES users(id)');
     if (!hasColumn(db, 'sessions', 'user_id')) db.exec('ALTER TABLE sessions ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE CASCADE');
+  },
+  // 2: SSO sign-in links a user to their provider's subject. SQLite can't add a UNIQUE column, so
+  // the uniqueness is an index. Checked first, as an unversioned database may already have both.
+  (db) => {
+    if (!hasColumn(db, 'users', 'oidc_sub')) db.exec('ALTER TABLE users ADD COLUMN oidc_sub TEXT');
+    db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_oidc_sub ON users(oidc_sub)');
   },
 ];
 export const SCHEMA_VERSION = MIGRATIONS.length;
