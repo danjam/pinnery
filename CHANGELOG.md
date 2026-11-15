@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.5.0](https://github.com/danjam/pinnery/compare/v0.4.0...v0.5.0) (2026-11-15)
+
+
+### Features
+
+* sign in with an OpenID Connect provider (SSO) ([#144](https://github.com/danjam/pinnery/issues/144)) ([049c488](https://github.com/danjam/pinnery/commit/049c488b2fe1dce8a80823b742a761c22859f1eb))
+
+
+### Bug Fixes
+
+* **deps:** update dependency nodemailer to v10.5.0 ([#136](https://github.com/danjam/pinnery/issues/136)) ([fdfff3f](https://github.com/danjam/pinnery/commit/fdfff3fc7400217f2408a344bffe9a8af3cac3db))
+* **deps:** update gcr.io/distroless/nodejs26-debian13:latest docker digest to 80631bd ([#139](https://github.com/danjam/pinnery/issues/139)) ([416bf1b](https://github.com/danjam/pinnery/commit/416bf1b1ba84d3c61aa78534152da4917e7fec0e))
+* **deps:** update node.js to e6bedef ([#140](https://github.com/danjam/pinnery/issues/140)) ([c1c795f](https://github.com/danjam/pinnery/commit/c1c795f27d7e8fbf0ea86419968ba6b456b9b3fa))
+
 ## [0.4.0](https://github.com/danjam/pinnery/compare/v0.3.0...v0.4.0) (2026-11-02)
 
 
