@@ -9,6 +9,7 @@ import type { AddressInfo } from 'node:net';
 //   const idp = await startIdp();
 //   // point Pinnery at idp.issuer with CLIENT_ID / CLIENT_SECRET
 //   const code = idp.authorize(authorizationUrl, { sub: 'u1', email: 'a@example.com', email_verified: true });
+//   idp.loginAs({ ... });   // or let a browser through /authorize as this identity
 //   await idp.close();
 
 export const CLIENT_ID = 'pinnery-test';
@@ -39,6 +40,21 @@ export async function startIdp() {
   const grants = new Map<string, Grant>();
   const tokens = new Map<string, Identity>();
   let issuer = '';
+  let loginAs: Identity | null = null;
+
+  // The provider's side of the authorization step: check the request Pinnery redirected to and
+  // return the code it would send back, for `identity`.
+  function authorize(location: string, identity: Identity): string {
+    const u = new URL(location);
+    if (`${u.origin}${u.pathname}` !== `${issuer}/authorize`) throw new Error(`not our authorize endpoint: ${location}`);
+    const q = (k: string) => u.searchParams.get(k) ?? '';
+    if (q('client_id') !== CLIENT_ID || q('response_type') !== 'code' || q('code_challenge_method') !== 'S256' || !q('nonce') || !q('state')) {
+      throw new Error(`bad authorization request: ${location}`);
+    }
+    const code = crypto.randomBytes(16).toString('hex');
+    grants.set(code, { identity, challenge: q('code_challenge'), nonce: q('nonce'), redirectUri: q('redirect_uri') });
+    return code;
+  }
 
   function idToken(identity: Identity, nonce: string) {
     const now = Math.floor(Date.now() / 1000);
@@ -72,6 +88,14 @@ export async function startIdp() {
       });
     }
     if (url.pathname === '/jwks') return json(res, 200, { keys: [jwk] });
+    // A browser arriving to sign in (the browser tests): signed in at once as loginAs.
+    if (url.pathname === '/authorize' && loginAs) {
+      const back = new URL(url.searchParams.get('redirect_uri')!);
+      back.searchParams.set('code', authorize(url.href, loginAs));
+      back.searchParams.set('state', url.searchParams.get('state')!);
+      res.writeHead(302, { location: back.href });
+      return res.end();
+    }
     if (url.pathname === '/token' && req.method === 'POST') {
       const p = new URLSearchParams(body);
       const grant = grants.get(p.get('code') ?? '');
@@ -97,21 +121,9 @@ export async function startIdp() {
 
   return {
     issuer,
-    /**
-     * The provider's side of the authorization step: check the request Pinnery redirected to and
-     * return the code it would send back, for `identity`.
-     */
-    authorize(location: string, identity: Identity): string {
-      const u = new URL(location);
-      if (`${u.origin}${u.pathname}` !== `${issuer}/authorize`) throw new Error(`not our authorize endpoint: ${location}`);
-      const q = (k: string) => u.searchParams.get(k) ?? '';
-      if (q('client_id') !== CLIENT_ID || q('response_type') !== 'code' || q('code_challenge_method') !== 'S256' || !q('nonce') || !q('state')) {
-        throw new Error(`bad authorization request: ${location}`);
-      }
-      const code = crypto.randomBytes(16).toString('hex');
-      grants.set(code, { identity, challenge: q('code_challenge'), nonce: q('nonce'), redirectUri: q('redirect_uri') });
-      return code;
-    },
+    authorize,
+    /** Answer browsers at /authorize by signing them straight in as `identity`. */
+    loginAs(identity: Identity) { loginAs = identity; },
     close: () => new Promise<void>((resolve) => { server.closeAllConnections(); server.close(() => resolve()); }),
   };
 }

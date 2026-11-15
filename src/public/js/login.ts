@@ -21,7 +21,7 @@ const SSO_ERRORS: Record<string, string> = {
   sso_unavailable: 'The sign-in provider can\u2019t be reached right now. Sign in with your password.',
 };
 const ssoError = new URLSearchParams(location.search).get('error');
-if (ssoError && SSO_ERRORS[ssoError]) showError(SSO_ERRORS[ssoError]);
+if (ssoError && Object.hasOwn(SSO_ERRORS, ssoError)) showError(SSO_ERRORS[ssoError]);
 
 // Offer SSO when the server has it set up, carrying ?next= through.
 const sso = document.getElementById('sso') as HTMLAnchorElement;

@@ -9,9 +9,11 @@ import { hex, normaliseEmail, parseCookies, safeNext } from './util.ts';
 // PINNERY_OIDC_ISSUER, PINNERY_OIDC_CLIENT_ID and PINNERY_OIDC_CLIENT_SECRET, and needs
 // PINNERY_PUBLIC_URL for the redirect URI. Off when any of those is missing.
 //
-// Authorization code flow with PKCE, state and nonce. GET /auth/oidc/start parks the checks in
-// memory under the state, sets the state in a cookie, and sends the browser to the provider; the
-// provider sends it back to GET /auth/oidc/callback, where the state must match the cookie.
+// Authorization code flow with PKCE, state and nonce. GET /auth/oidc/start puts the checks (state,
+// PKCE verifier, nonce, next) in an HttpOnly cookie and sends the browser to the provider; the
+// provider sends it back to GET /auth/oidc/callback, where the state must match the cookie's. Kept
+// in the browser rather than server memory, so an anonymous client can't fill a shared store and
+// lock everyone else out of SSO. The code is single-use at the provider, so a replayed cookie fails.
 // openid-client checks the ID token's issuer, audience, expiry and nonce; its signature isn't
 // checked, as it comes straight from the token endpoint over TLS (OIDC Core 3.1.3.7).
 //
@@ -24,8 +26,7 @@ import { hex, normaliseEmail, parseCookies, safeNext } from './util.ts';
 // (fetch.ts): it's usually on a private address the guard would refuse.
 
 export const OIDC_COOKIE = 'pinnery_oidc';
-const STATE_TTL_MS = 10 * 60 * 1000;
-const MAX_PENDING = 1000;
+const STATE_TTL_S = 10 * 60;
 const SCOPE = 'openid email profile';
 export const CALLBACK_PATH = '/auth/oidc/callback';
 
@@ -40,11 +41,23 @@ export interface OidcOptions {
 // The codes /login?error= shows a message for (public/js/login.ts).
 type Failure = 'sso_failed' | 'sso_unverified' | 'sso_no_account' | 'sso_unavailable';
 
+// What the state cookie carries (base64url JSON).
 interface Pending {
+  state: string;
   verifier: string;
   nonce: string;
   next: string;
-  expires: number;
+}
+
+function readPending(raw: string | undefined): Pending | null {
+  if (!raw || raw.length > 4096) return null;
+  try {
+    const p = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8'));
+    const ok = p && typeof p.state === 'string' && typeof p.verifier === 'string' && typeof p.nonce === 'string' && typeof p.next === 'string';
+    return ok ? p : null;
+  } catch {
+    return null;
+  }
 }
 
 interface LinkRow {
@@ -64,7 +77,6 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
   const bySub = db.prepare<[string], LinkRow>('SELECT id, oidc_sub FROM users WHERE oidc_sub = ?');
   const byEmail = db.prepare<[string], LinkRow>('SELECT id, oidc_sub FROM users WHERE email = ?');
   const link = db.prepare<[string, number]>('UPDATE users SET oidc_sub = ? WHERE id = ? AND oidc_sub IS NULL');
-  const pending = new Map<string, Pending>();
 
   // Discovery happens on first use, not at startup, so a provider that's down doesn't stop Pinnery
   // starting. A failure is dropped so the next sign-in tries again.
@@ -105,9 +117,6 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
   async function oidcStart(req: Request, res: Response) {
     if (!enabled) return res.status(404).type('text').send('not found');
     res.set('Cache-Control', 'no-store');
-    const now = Date.now();
-    for (const [s, p] of pending) if (p.expires <= now) pending.delete(s);
-    if (pending.size >= MAX_PENDING) return res.status(429).type('text').send('too many sign-ins in progress, try again shortly');
     let cfg: client.Configuration;
     try {
       cfg = await getConfig();
@@ -118,8 +127,8 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
     const state = hex(crypto.randomBytes(32));
     const verifier = client.randomPKCECodeVerifier();
     const nonce = client.randomNonce();
-    pending.set(state, { verifier, nonce, next: safeNext(req.query.next) || '/', expires: now + STATE_TTL_MS });
-    stateCookie(res, state, STATE_TTL_MS / 1000);
+    const pending: Pending = { state, verifier, nonce, next: safeNext(req.query.next) || '/' };
+    stateCookie(res, Buffer.from(JSON.stringify(pending)).toString('base64url'), STATE_TTL_S);
     const to = client.buildAuthorizationUrl(cfg, {
       redirect_uri: redirectUri,
       scope: SCOPE,
@@ -136,10 +145,11 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
     if (!enabled) return res.status(404).type('text').send('not found');
     res.set('Cache-Control', 'no-store');
     res.set('Referrer-Policy', 'no-referrer'); // the URL carries the code
-    const state = parseCookies(req.headers.cookie)[OIDC_COOKIE] || '';
-    const entry = state ? pending.get(state) : undefined;
-    pending.delete(state);
-    if (!entry || entry.expires <= Date.now() || req.query.state !== state) return fail(res, 'sso_failed');
+    // The cookie's Max-Age is the time limit. next is checked again, as the cookie came back from
+    // the browser.
+    const entry = readPending(parseCookies(req.headers.cookie)[OIDC_COOKIE]);
+    if (!entry || req.query.state !== entry.state) return fail(res, 'sso_failed');
+    const { state } = entry;
     if (req.query.error) return fail(res, 'sso_failed'); // e.g. the user cancelled at the provider
 
     let claims: client.IDToken;
@@ -177,7 +187,7 @@ export function createOidc(db: Db, { startSession }: Core, opts: OidcOptions) {
     }
     startSession(res, user.id);
     stateCookie(res, '', 0);
-    res.redirect(302, entry.next);
+    res.redirect(302, safeNext(entry.next) || '/');
   }
 
   return { oidcStatus, oidcStart, oidcCallback };
