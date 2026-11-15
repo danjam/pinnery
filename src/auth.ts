@@ -6,6 +6,8 @@ import { createCore } from './auth/core.ts';
 import { createEmailChange } from './auth/email-change.ts';
 import { createInvites } from './auth/invites.ts';
 import { createLinks } from './auth/links.ts';
+import { createOidc } from './auth/oidc.ts';
+import type { OidcOptions } from './auth/oidc.ts';
 import { createReset } from './auth/reset.ts';
 import { seedAdmin } from './auth/seed.ts';
 
@@ -18,24 +20,27 @@ import { seedAdmin } from './auth/seed.ts';
 //   reset.ts         forgotten password, and admins' reset links
 //   email-change.ts  changing the sign-in email
 //   connect.ts       the extension's connect flow
+//   oidc.ts          signing in with an OpenID Connect provider (SSO)
 //   util.ts          hashing, cookies, safeNext and other pure helpers
 export { safeNext, linkBase, sameOrigin, COOKIE } from './auth/util.ts';
 export type { LinkKind, PublicUser, Session } from './auth/util.ts';
 export { parseConnectParams } from './auth/connect.ts';
 export type { ConnectParams } from './auth/connect.ts';
+export { CALLBACK_PATH } from './auth/oidc.ts';
 
 // mailer: see mail.ts (may be disabled). publicUrl: PINNERY_PUBLIC_URL, the base of emailed links;
-// without it the request's own origin is used.
+// without it the request's own origin is used. oidc: the SSO provider, see auth/oidc.ts.
 export interface AuthOptions {
   password?: string;
   adminEmail?: string;
   mailer: Mailer;
   publicUrl?: string;
+  oidc?: Omit<OidcOptions, 'publicUrl'>;
 }
 
 export type Auth = ReturnType<typeof createAuth>;
 
-export function createAuth(db: Db, { password, adminEmail, mailer, publicUrl = '' }: AuthOptions) {
+export function createAuth(db: Db, { password, adminEmail, mailer, publicUrl = '', oidc = {} }: AuthOptions) {
   if (!password || !adminEmail) throw new Error('PINNERY_ADMIN_EMAIL and PINNERY_PASSWORD are required');
   seedAdmin(db, password, adminEmail);
   const core = createCore(db);
@@ -46,5 +51,6 @@ export function createAuth(db: Db, { password, adminEmail, mailer, publicUrl = '
     ...createReset(db, core, links, { mailer, publicUrl }),
     ...createEmailChange(db, core, links, mailer),
     ...createConnect(core),
+    ...createOidc(db, core, { ...oidc, publicUrl }),
   };
 }

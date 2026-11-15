@@ -7,7 +7,7 @@ import { rateLimit } from 'express-rate-limit';
 import type { NextFunction, Request, Response } from 'express';
 import { openDb, SchemaError } from './db.ts';
 import type { Db } from './db.ts';
-import { createAuth, safeNext, parseConnectParams, sameOrigin, COOKIE } from './auth.ts';
+import { createAuth, safeNext, parseConnectParams, sameOrigin, CALLBACK_PATH, COOKIE } from './auth.ts';
 import { createMailer } from './mail.ts';
 import { createStore, ImageError } from './images.ts';
 import { createRoutes, createImageRoutes } from './routes.ts';
@@ -66,7 +66,20 @@ try {
 const store = createStore(DATA_DIR);
 const mailer = createMailer();
 if (mailer.enabled && !PUBLIC_URL) console.warn('mail: PINNERY_PUBLIC_URL is not set, so "forgot password" won\'t email reset links (admins can still hand them out)');
-const auth = createAuth(db, { password: PASSWORD, adminEmail: ADMIN_EMAIL, mailer, publicUrl: PUBLIC_URL });
+// Single sign-on with an OpenID Connect provider (auth/oidc.ts), alongside passwords. The redirect
+// URI is built on PINNERY_PUBLIC_URL, so it's off without one.
+const OIDC = {
+  issuer: process.env.PINNERY_OIDC_ISSUER,
+  clientId: process.env.PINNERY_OIDC_CLIENT_ID,
+  clientSecret: process.env.PINNERY_OIDC_CLIENT_SECRET,
+  name: process.env.PINNERY_OIDC_NAME,
+};
+if (OIDC.issuer || OIDC.clientId) {
+  if (!OIDC.issuer || !OIDC.clientId) console.warn('oidc: PINNERY_OIDC_ISSUER and PINNERY_OIDC_CLIENT_ID are both needed — SSO sign-in is off');
+  else if (!PUBLIC_URL) console.warn('oidc: PINNERY_PUBLIC_URL is not set, so SSO sign-in is off');
+  else console.log(`oidc: SSO sign-in via ${OIDC.issuer}`);
+}
+const auth = createAuth(db, { password: PASSWORD, adminEmail: ADMIN_EMAIL, mailer, publicUrl: PUBLIC_URL, oidc: OIDC });
 
 // Delete files no pin references (crash leftovers) and warn about pins whose original is missing.
 // Also clear the import spool: anything in it is from an import a crash or restart cut short.
@@ -164,6 +177,12 @@ app.get('/login', (req, res) => {
 });
 app.post('/api/login', refuseCrossSite, express.json({ limit: '4kb' }), express.urlencoded({ extended: false, limit: '4kb' }), auth.login);
 app.post('/api/logout', refuseCrossSite, auth.logout);
+// SSO (auth/oidc.ts): the login page asks /api/oidc whether to offer it; its button goes to start,
+// which sends the browser to the provider, which sends it back to the callback. GETs only: the
+// provider's redirect back is cross-site, and the CSRF check above would refuse a POST.
+app.get('/api/oidc', auth.oidcStatus);
+app.get('/auth/oidc/start', auth.oidcStart);
+app.get(CALLBACK_PATH, auth.oidcCallback);
 // "Choose a new password": where a required change is made (also reachable by choice). Everything
 // else is closed until it's done — see requireApi/requirePage in auth.ts.
 app.get('/password', (req, res) => {

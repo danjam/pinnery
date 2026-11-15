@@ -80,6 +80,7 @@ With a proxy in front, don't publish Pinnery's port: let the proxy reach it over
 - [Proxies and sign-in limits](docs/proxies.md): `PINNERY_PROXIES`, and why it matters
 - [Email](docs/email.md): what Pinnery sends, and setting it up
 - [Accounts and sharing](docs/accounts-and-sharing.md): invites, viewers and editors, passwords, admins
+- [Single sign-on](docs/sso.md): signing in with an OpenID Connect provider
 - [Chrome extension](docs/extension.md): pin any image on the web
 - [On mobile](docs/mobile.md): install the app and share images to it
 - [Backups and updates](docs/backups-and-updates.md): your data, and upgrading Pinnery
