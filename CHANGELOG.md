@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/danjam/pinnery/compare/v0.5.0...v0.5.1) (2026-11-20)
+
+
+### Bug Fixes
+
+* **deps:** update dependency nodemailer to v10.6.1 ([#147](https://github.com/danjam/pinnery/issues/147)) ([3b23fbb](https://github.com/danjam/pinnery/commit/3b23fbbbbb541845a67259a87e4f66bc178f0f16))
+
 ## [0.5.0](https://github.com/danjam/pinnery/compare/v0.4.0...v0.5.0) (2026-11-15)
 
 
