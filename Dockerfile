@@ -24,7 +24,7 @@ RUN mkdir /data
 # manager, so far less to patch. Debian-based (glibc), which the prebuilt sqlite/sharp binaries need.
 # The Node major is in the image name (nodejsNN), which Renovate can't bump: change it by hand with the
 # build stage's node:NN-slim. CI (test.yml) fails while the two differ.
-FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:80631bd2f0e7ef192138a7409013b47d92fd11b8ff3bb35f5c0a65be3ecaea4c
+FROM gcr.io/distroless/nodejs26-debian13:latest@sha256:b462e87a3db156aea160dd8a5306b85d02c3061ca0e3194fe0af81282a830ab0
 
 ENV NODE_ENV=production
 # The image keeps node in /nodejs/bin, off PATH; this lets healthchecks (ours and existing compose
