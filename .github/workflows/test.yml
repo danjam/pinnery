@@ -57,13 +57,15 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      # The tests under c8, which collects coverage from the servers they spawn too
-      # (NODE_V8_COVERAGE is inherited). The table goes to the log and the job summary.
+      # The tests with Node's built-in coverage, which also covers the servers they spawn. It writes
+      # coverage/lcov.info for Coveralls and coverage/report.txt, whose table goes to the job summary.
       - run: npm run coverage
       - name: Coverage summary
         if: always()
         run: |
-          { echo '### Coverage (src/)'; echo '```'; npx c8 report; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo '### Coverage (src/)'; echo '```'
+            sed -n '/start of coverage report/,/end of coverage report/s/^ℹ //p' coverage/report.txt
+            echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       # Coveralls keeps the history, comments the change on PRs and serves the README badge. Its
       # failures don't fail the job: this job is a required check, and an outage there shouldn't block
       # merges.

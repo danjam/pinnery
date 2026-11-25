@@ -11,7 +11,7 @@ Pinnery: self-hosted image boards with accounts, sharing, a Chrome extension (`e
 - Type-check: `npm run typecheck` (tsc, no output; one tsconfig each for the server and tests, `src/public`, its service worker (`tsconfig.sw.json`) and `extension`). CI runs it before the tests.
 - Test: `npm test` (node --test). Tests live in `test/<area>/` (accounts, auth, boards, pins), plus a few at the top level. Each file boots its own server with `startServer()` from `test/helpers/server.ts`; its header explains the clients and the sign-in throttle budget the tests share. Exercise UI changes against a throwaway instance.
 - Browser tests: `npm run e2e` (Playwright, Chromium; builds first). Specs live in `e2e/*.spec.ts`; `e2e/fixtures.ts` gives each worker a server from the same harness and a signed-in `user`. Sign in through the API (`signIn`), not the form, except in `auth.spec.ts`. First time: `npx playwright install chromium`. CI runs it as an optional `e2e` job.
-- Coverage: `npm run coverage` runs the tests under c8 and prints coverage of `src/` (server only; config in `.c8rc.json`). CI shows it in the job summary and uploads it to Coveralls (history, PR changes, the README badge).
+- Coverage: `npm run coverage` runs the tests with Node's built-in coverage and prints coverage of `src/` (server only; include/exclude flags in the `coverage` script), including files no test loads. CI shows it in the job summary and uploads it to Coveralls (history, PR changes, the README badge).
 - `node scripts/icons.ts` regenerates extension/app icons from `src/public/icon.svg`.
 
 ## TypeScript
