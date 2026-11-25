@@ -151,7 +151,7 @@ export interface StartOpts {
   env?: Record<string, string> | ((url: string) => Record<string, string>);
   /** Also start the SMTP sink and point the server at it. */
   mail?: boolean;
-  /** Run src/server.ts from this directory instead of the repo (see makeRoot in startup.test.ts). */
+  /** Run src/server.ts from this directory instead of the repo (see makeRoot in helpers/root.ts). */
   root?: string;
 }
 
