@@ -73,4 +73,16 @@ describe('pins', () => {
     await bob.del(`/api/pins/${b.id}`);
     assert.ok(!fs.existsSync(originalFile(server, a.sha256)));
   });
+
+  it('regenerates a missing thumbnail from the original, once for concurrent requests', async () => {
+    const { body: pin } = await upload(alice, board.id, await pngBuffer({ width: 500, height: 300, color: '#13579b' }));
+    const thumb = path.join(server.dataDir, 'thumbs', pin.sha256.slice(0, 2), `${pin.sha256}-400.webp`);
+    fs.unlinkSync(thumb);
+    const [a, b] = await Promise.all([alice.fetch(`/t/400/${pin.sha256}`), alice.fetch(`/t/400/${pin.sha256}`)]);
+    for (const t of [a, b]) {
+      assert.equal(t.status, 200);
+      assert.equal(t.headers.get('content-type'), 'image/webp');
+    }
+    assert.ok(fs.existsSync(thumb));
+  });
 });

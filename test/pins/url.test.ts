@@ -17,6 +17,16 @@ async function startUpstream(png: Buffer): Promise<Upstream> {
     if (req.url === '/img.png') res.writeHead(200, { 'content-type': 'image/png' }).end(png);
     else if (req.url === '/redirect') res.writeHead(302, { location: '/img.png' }).end();
     else if (req.url === '/text') res.writeHead(200, { 'content-type': 'text/plain' }).end('hello');
+    // Over the 50 MB limit: by Content-Length (nothing sent), or streamed with no length given.
+    else if (req.url === '/huge-declared') res.writeHead(200, { 'content-type': 'image/png', 'content-length': String(60 * 1048576) }).flushHeaders();
+    else if (req.url === '/huge-stream') {
+      res.writeHead(200, { 'content-type': 'image/png' });
+      const mb = Buffer.alloc(1048576);
+      let sent = 0;
+      const more = () => { while (sent < 60 && !res.destroyed) { sent++; if (!res.write(mb)) return res.once('drain', more); } res.end(); };
+      res.on('error', () => {}); // the client hangs up once it's over the limit
+      more();
+    }
     else res.writeHead(404).end();
   });
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
@@ -75,6 +85,17 @@ describe('pins by URL', () => {
     const b = await newBoard(openUser, 'Bad');
     assert.equal((await openUser.post('/api/pins/url', { board_id: b.id, url: `${base()}/text` })).status, 415);
     assert.equal((await openUser.post('/api/pins/url', { board_id: b.id, url: `${base()}/missing` })).status, 502);
+  });
+
+  it('refuses images over the size limit, declared or streamed', async () => {
+    const b = await newBoard(openUser, 'Huge');
+    const declared = await openUser.post('/api/pins/url', { board_id: b.id, url: `${base()}/huge-declared` });
+    assert.equal(declared.status, 413);
+    assert.equal(declared.body.error, 'image too large (60 MB, limit 50 MB)');
+    const streamed = await openUser.post('/api/pins/url', { board_id: b.id, url: `${base()}/huge-stream` });
+    assert.equal(streamed.status, 413);
+    assert.equal(streamed.body.error, 'image too large (limit 50 MB)');
+    assert.equal((await openUser.get(`/api/boards/${b.id}/pins`)).body.pins.length, 0);
   });
 
   it("doesn't pass network error details back to the client", async () => {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 import zlib from 'node:zlib';
 import { createZipWriter, openZipFile } from '../src/zip.ts';
 
@@ -184,6 +185,48 @@ describe('zip I/O yields to the event loop', () => {
     try {
       assert.deepEqual(await z.read(z.entries[0]), data);
       assert.ok(state.ticked);
+    } finally {
+      await z.close();
+    }
+  });
+});
+
+describe('zip edge cases', () => {
+  let dir: string;
+  before(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pinnery-zip-edge-')); });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  // A sink that is always full: every write waits for the event named by `release`.
+  function fullSink(release: 'drain' | 'close') {
+    const chunks: Buffer[] = [];
+    const emitter = new EventEmitter();
+    const sink = {
+      write: (b: Buffer) => { chunks.push(b); setImmediate(() => emitter.emit(release)); return false; },
+      on: (ev: string, fn: () => void) => { emitter.on(ev, fn); },
+      off: (ev: string, fn: () => void) => { emitter.off(ev, fn); },
+    };
+    return { sink, chunks, emitter };
+  }
+
+  for (const release of ['drain', 'close'] as const) {
+    it(`waits for '${release}' when the sink is full`, async () => {
+      const { sink, chunks, emitter } = fullSink(release);
+      const z = createZipWriter(sink);
+      await z.add('a.txt', Buffer.from('hello'));
+      await z.end();
+      assert.ok(chunks.length > 0);
+      assert.equal(emitter.listenerCount('drain') + emitter.listenerCount('close'), 0, 'listeners are removed');
+    });
+  }
+
+  it('refuses an entry whose deflate data is corrupt', async () => {
+    const zip = await makeZip([['a.txt', Buffer.alloc(1000, 'a')]]);
+    zip[30 + zip.readUInt16LE(26) + zip.readUInt16LE(28)] = 0x07; // final block, reserved type 3
+    const file = path.join(dir, 'corrupt.zip');
+    fs.writeFileSync(file, zip);
+    const z = await openZipFile(file);
+    try {
+      await assert.rejects(z.read(z.entries[0]), /a\.txt: corrupt entry/);
     } finally {
       await z.close();
     }

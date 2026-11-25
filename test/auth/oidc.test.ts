@@ -117,6 +117,12 @@ describe('SSO sign-in (OIDC)', () => {
     assert.equal((await fetch(back, { redirect: 'manual', headers: { cookie } })).headers.get('location'), '/login?error=sso_failed');
   });
 
+  it('refuses a state cookie that isn\'t base64url JSON', async () => {
+    const headers = { cookie: `pinnery_oidc=${Buffer.from('{not json').toString('base64url')}` };
+    const res = await fetch(`${server.url}/auth/oidc/callback?code=x&state=y`, { redirect: 'manual', headers });
+    assert.equal(res.headers.get('location'), '/login?error=sso_failed');
+  });
+
   it('passes on the provider refusing', async () => {
     const r = await signIn(server, idp, { sub: 'grace-sub' }, { tamper: (u) => { u.searchParams.delete('code'); u.searchParams.set('error', 'access_denied'); } });
     assert.equal(r.location, '/login?error=sso_failed');

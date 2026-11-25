@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { startServer } from '../helpers/server.ts';
 import type { Client, Server } from '../helpers/server.ts';
 import { pngBuffer } from '../helpers/images.ts';
-import { newBoard, rawPost, type BoardRef } from '../helpers/pins.ts';
+import { newBoard, rawPost, upload, type BoardRef } from '../helpers/pins.ts';
 
 const tok = (pick: { token: string }) => pick.token;
 
@@ -91,5 +91,21 @@ describe('picks', () => {
     assert.equal((await rawPost(alice, '/api/pick/upload', Buffer.from('nope'))).status, 415);
     assert.equal((await rawPost(alice, '/api/pick/upload', Buffer.alloc(0))).status, 400);
     assert.equal((await alice.post('/api/pick/url', {})).status, 400);
+  });
+
+  it('serves thumbnails of the picker\'s board covers, and nothing else', async () => {
+    const covered = await newBoard(alice, 'Covered');
+    const { body: pin } = await upload(alice, covered.id, await pngBuffer({ width: 30, height: 30, color: '#2468ac' }));
+    const bobBoard = await newBoard(bob, 'Bob cover');
+    const { body: bobPin } = await upload(bob, bobBoard.id, await pngBuffer({ width: 30, height: 30, color: '#ca8642' }));
+    const t = tok(await park(alice, '#112233'));
+    const anon = server.anon();
+    const cover = await anon.fetch(`/pick/${t}/t/400/${pin.sha256}`);
+    assert.equal(cover.status, 200);
+    assert.equal(cover.headers.get('content-type'), 'image/webp');
+    assert.equal(cover.headers.get('cache-control'), 'private, max-age=600');
+    assert.equal((await anon.fetch(`/pick/${t}/t/400/${bobPin.sha256}`)).status, 404);
+    assert.equal((await anon.fetch(`/pick/${t}/t/123/${pin.sha256}`)).status, 404);
+    assert.equal((await anon.fetch(`/pick/${t}/t/400/not-a-sha`)).status, 404);
   });
 });

@@ -174,6 +174,39 @@ describe('export and import', () => {
     assert.equal((await importZip(u, zip)).status, 200);
   });
 
+  it('drops the spooled file when the upload is cut off', async () => {
+    const u = await server.createUser('spool@example.com', 'spool-password-1');
+    const zip = await makeZip([['pins.json', manifest([])]]);
+    const req = http.request(new URL('/api/import', server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/zip', 'content-length': zip.length, cookie: u.cookie()!, 'sec-fetch-site': 'same-origin' },
+    });
+    req.on('error', () => {}); // destroyed on purpose below
+    req.write(zip.subarray(0, 10));
+    const tmp = path.join(server.dataDir, 'tmp');
+    const spooling = () => fs.existsSync(tmp) && fs.readdirSync(tmp).some((f) => f.startsWith('import-'));
+    for (let i = 0; i < 250 && !spooling(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(spooling(), 'the import is being received');
+    req.destroy();
+    for (let i = 0; i < 250 && spooling(); i++) await new Promise((r) => setTimeout(r, 20));
+    assert.ok(!spooling(), 'the partial upload was removed');
+    assert.equal((await importZip(u, zip)).status, 200, 'and the import lock was released');
+  });
+
+  // Not as root: root reads the file regardless of its mode.
+  it('cuts the export off when an image file can\'t be read', { skip: process.getuid?.() === 0 }, async (t) => {
+    const u = await server.createUser('gone@example.com', 'gone-password-1');
+    const b = await newBoard(u, 'Unreadable');
+    const { body: pin } = await upload(u, b.id, await pngBuffer({ color: '#0f0f0f' }));
+    const file = path.join(server.dataDir, 'originals', pin.sha256.slice(0, 2), pin.sha256);
+    fs.chmodSync(file, 0o000);
+    t.after(() => fs.chmodSync(file, 0o644));
+    const res = await u.fetch('/api/export');
+    assert.equal(res.status, 200, 'headers go out before the files are read');
+    await assert.rejects(res.arrayBuffer());
+    assert.equal((await u.get('/api/me')).status, 200, 'the server is still fine');
+  });
+
   it('a good zip with a valid manifest imports', async () => {
     const u = await server.createUser('frank@example.com', 'frank-password-1');
     const png = await pngBuffer({ color: '#202020' });
