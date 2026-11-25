@@ -152,7 +152,10 @@ async function run(env: Record<string, string>, cwd = root): Promise<{ code: num
   let out = '', stopping = false;
   child.stdout.on('data', (d) => { out += d; if (!stopping && out.includes('listening on')) { stopping = true; child.kill('SIGTERM'); } });
   child.stderr.on('data', (d) => { out += d; });
+  // A startup that hangs mustn't outlive the test (each test's own timeout is shorter than this).
+  const hung = setTimeout(() => child.kill('SIGKILL'), 20_000);
   const code = await new Promise<number | null>((resolve) => child.once('exit', resolve));
+  clearTimeout(hung);
   return { code, out };
 }
 

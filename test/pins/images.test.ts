@@ -74,7 +74,7 @@ describe('pins', () => {
     assert.ok(!fs.existsSync(originalFile(server, a.sha256)));
   });
 
-  it('regenerates a missing thumbnail from the original, once for concurrent requests', async () => {
+  it('regenerates a missing thumbnail from the original, for concurrent requests too', async () => {
     const { body: pin } = await upload(alice, board.id, await pngBuffer({ width: 500, height: 300, color: '#13579b' }));
     const thumb = path.join(server.dataDir, 'thumbs', pin.sha256.slice(0, 2), `${pin.sha256}-400.webp`);
     fs.unlinkSync(thumb);
