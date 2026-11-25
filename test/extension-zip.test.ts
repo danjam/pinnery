@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { openZipFile } from '../src/zip.ts';
+import { makeRoot } from './helpers/root.ts';
 import { startServer } from './helpers/server.ts';
 import type { Server } from './helpers/server.ts';
 
@@ -47,5 +48,24 @@ describe('GET /extension.zip', () => {
     // Zip entries carry the build time at 2-second resolution, so a rebuild would differ.
     await sleep(2100);
     assert.ok((await download()).equals(first));
+  });
+});
+
+describe('GET /extension.zip when the build fails', () => {
+  let server: Server, dir: string;
+  before(async () => {
+    dir = makeRoot({ extension: { 'manifest.json': 'not json' } });
+    server = await startServer({ root: dir });
+  });
+  after(async () => {
+    await server.stop();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers 500 and retries on the next download', async () => {
+    const admin = await server.adminClient();
+    assert.equal((await admin.fetch('/extension.zip')).status, 500);
+    fs.writeFileSync(path.join(dir, 'dist', 'extension', 'manifest.json'), JSON.stringify({ version: '1.0' }));
+    assert.equal((await admin.fetch('/extension.zip')).status, 200);
   });
 });

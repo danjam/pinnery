@@ -151,6 +151,8 @@ export interface StartOpts {
   env?: Record<string, string> | ((url: string) => Record<string, string>);
   /** Also start the SMTP sink and point the server at it. */
   mail?: boolean;
+  /** Run src/server.ts from this directory instead of the repo (see makeRoot in helpers/root.ts). */
+  root?: string;
 }
 
 export interface IpOpts {
@@ -213,7 +215,7 @@ class StartupError extends Error {
   }
 }
 
-async function startOnce({ env = {}, mail = false }: StartOpts): Promise<Server> {
+async function startOnce({ env = {}, mail = false, root: cwd = root }: StartOpts): Promise<Server> {
   const dataDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pinnery-test-'));
   const port = await freePort();
   const sink = mail ? await startMailSink() : undefined;
@@ -239,7 +241,7 @@ async function startOnce({ env = {}, mail = false }: StartOpts): Promise<Server>
   Object.assign(childEnv, typeof env === 'function' ? env(`http://127.0.0.1:${port}`) : env);
 
   let out = '';
-  const child = spawn(process.execPath, ['src/server.ts'], { cwd: root, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['src/server.ts'], { cwd, env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
   const collect = (d: Buffer | string): void => { out += d; };
   child.stdout.on('data', collect);
   child.stderr.on('data', collect);
