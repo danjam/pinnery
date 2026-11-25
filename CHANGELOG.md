@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.1](https://github.com/danjam/pinnery/compare/v0.5.0...v0.5.1) (2026-11-25)
+
+
+### Bug Fixes
+
+* **deps:** update dependency nodemailer to v10.6.1 ([#147](https://github.com/danjam/pinnery/issues/147)) ([3b23fbb](https://github.com/danjam/pinnery/commit/3b23fbbbbb541845a67259a87e4f66bc178f0f16))
+* **deps:** update gcr.io/distroless/nodejs26-debian13:latest docker digest to b462e87 ([#155](https://github.com/danjam/pinnery/issues/155)) ([9b9c6cc](https://github.com/danjam/pinnery/commit/9b9c6cc185614a70f4304331f1bc85e77938bfd1))
+* **deps:** update node.js to abe7e5a ([#162](https://github.com/danjam/pinnery/issues/162)) ([6f8e96b](https://github.com/danjam/pinnery/commit/6f8e96b1f689d3051ecbf5443ee72d649cfd1bff))
+
 ## [0.5.0](https://github.com/danjam/pinnery/compare/v0.4.0...v0.5.0) (2026-11-15)
 
 
